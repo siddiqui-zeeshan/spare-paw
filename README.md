@@ -218,4 +218,4 @@ Install the resulting plugin ZIP from `build/distributions/` into DataGrip.
 
 ## License
 
-TBD
+MIT — see [LICENSE](LICENSE).
