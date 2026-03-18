@@ -14,9 +14,11 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from telegram import Update
-from telegram.constants import ChatAction
-from telegram.ext import ContextTypes, MessageHandler, filters
+import re
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ChatAction, ParseMode
+from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from pathlib import Path
 
@@ -64,6 +66,8 @@ def setup_handlers(application: "Application") -> None:
     application.add_handler(
         MessageHandler(filters.PHOTO, _queue_message)
     )
+    # Inline keyboard button callbacks
+    application.add_handler(CallbackQueryHandler(_handle_callback))
 
     # Queue processor is started explicitly by the gateway after initialize()
 
@@ -326,22 +330,36 @@ def _extract_cron_context(update: Update) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Response sending
+# Response sending (MarkdownV2 with plain text fallback)
 # ---------------------------------------------------------------------------
 
+# Characters that must be escaped in MarkdownV2
+_MD2_ESCAPE_RE = re.compile(r"([_*\[\]()~`>#+\-=|{}.!\\])")
+
+
+def _escape_md2(text: str) -> str:
+    """Escape special characters for Telegram MarkdownV2."""
+    return _MD2_ESCAPE_RE.sub(r"\\\1", text)
+
+
 async def _send_response(update: Update, text: str) -> None:
-    """Send a response, splitting into chunks if it exceeds Telegram's limit."""
+    """Send a response with MarkdownV2, falling back to plain text on error."""
     if not text:
         text = "(empty response)"
 
-    if len(text) <= _MAX_MESSAGE_LENGTH:
-        await update.message.reply_text(text)
-        return
-
-    # Split into chunks at line boundaries where possible
     chunks = _split_text(text, _MAX_MESSAGE_LENGTH)
     for chunk in chunks:
-        await update.message.reply_text(chunk)
+        # Try MarkdownV2 first
+        try:
+            await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN_V2)
+        except Exception:
+            # If MarkdownV2 fails (bad formatting), try escaped version
+            try:
+                escaped = _escape_md2(chunk)
+                await update.message.reply_text(escaped, parse_mode=ParseMode.MARKDOWN_V2)
+            except Exception:
+                # Last resort: plain text
+                await update.message.reply_text(chunk)
 
 
 def _split_text(text: str, max_length: int) -> list[str]:
@@ -365,6 +383,52 @@ def _split_text(text: str, max_length: int) -> list[str]:
         text = text[cut_at:].lstrip("\n")
 
     return chunks
+
+
+# ---------------------------------------------------------------------------
+# Inline keyboard callback handler
+# ---------------------------------------------------------------------------
+
+async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle inline keyboard button presses."""
+    query = update.callback_query
+    if query is None:
+        return
+
+    app_state = context.bot_data.get("app_state")
+    if app_state is None:
+        await query.answer("Not ready")
+        return
+
+    # Owner-only
+    owner_id = app_state.config.get("telegram.owner_id")
+    if query.from_user is None or query.from_user.id != owner_id:
+        await query.answer("Unauthorized")
+        return
+
+    data = query.data or ""
+    await query.answer()
+
+    if data.startswith("approve:"):
+        tool_name = data[len("approve:"):]
+        from claw_phone.tools.custom_tools import approve_tool
+        import json
+        result_str = await approve_tool(tool_name, app_state.tool_registry, app_state)
+        result = json.loads(result_str)
+        if result.get("error"):
+            await query.edit_message_text(f"Error: {result['error']}")
+        else:
+            await query.edit_message_text(f"Tool '{tool_name}' approved and activated.")
+
+    elif data.startswith("reject:"):
+        tool_name = data[len("reject:"):]
+        # Delete pending files
+        from claw_phone.tools.custom_tools import PENDING_DIR
+        for ext in (".json", ".sh"):
+            path = PENDING_DIR / f"{tool_name}{ext}"
+            if path.exists():
+                path.unlink()
+        await query.edit_message_text(f"Tool '{tool_name}' rejected and discarded.")
 
 
 # ---------------------------------------------------------------------------

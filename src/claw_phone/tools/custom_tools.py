@@ -306,15 +306,22 @@ async def _handle_tool_create(
                 f"New tool proposed: {name}\n\n"
                 f"Description: {description}\n\n"
                 f"Parameters:\n{params_display}\n\n"
-                f"Script:\n```\n{script_display}\n```\n\n"
-                f"To approve, send: /approve {name}"
+                f"Script:\n```\n{script_display}\n```"
             )
 
             # Telegram has a 4096 char limit
             if len(msg) > 4096:
                 msg = msg[:4090] + "\n..."
 
-            await bot.send_message(chat_id=owner_id, text=msg)
+            # Send with inline approve/reject buttons
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("Approve", callback_data=f"approve:{name}"),
+                    InlineKeyboardButton("Reject", callback_data=f"reject:{name}"),
+                ]
+            ])
+            await bot.send_message(chat_id=owner_id, text=msg, reply_markup=keyboard)
     except Exception:  # noqa: BLE001
         logger.exception("Failed to send tool approval request to owner")
 
