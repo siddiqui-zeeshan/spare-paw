@@ -7,9 +7,8 @@ USAGE = """\
 Usage: python -m claw_phone <command>
 
 Commands:
-  setup       Run the interactive setup wizard
-  gateway     Start the Telegram bot + scheduler (main loop)
-  mcp-server  Start as an MCP server (stdio transport)
+  setup     Run the interactive setup wizard
+  gateway   Start the Telegram bot + scheduler (main loop)
 """
 
 
@@ -28,10 +27,6 @@ def main() -> None:
         from claw_phone.gateway import run
 
         run()
-    elif command == "mcp-server":
-        from claw_phone.mcp.server import run_mcp_server
-
-        run_mcp_server()
     else:
         print(f"Unknown command: {command}\n")
         print(USAGE.strip())

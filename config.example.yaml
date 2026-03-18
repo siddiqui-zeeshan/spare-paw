@@ -57,7 +57,6 @@ logging:
   backup_count: 3
 
 # MCP (Model Context Protocol) — connect to external tool servers
-# and expose phone tools as an MCP server
 mcp:
   servers: []
     # - name: "github"
@@ -68,5 +67,3 @@ mcp:
     # - name: "filesystem"
     #   command: "npx"
     #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/sdcard"]
-  server:
-    enabled: true  # expose phone tools via `python -m claw_phone mcp-server`

@@ -1,4 +1,4 @@
-"""Tests for MCP support — schema conversion, client proxy, and server exposure."""
+"""Tests for MCP support — schema conversion and client proxy."""
 
 from __future__ import annotations
 
@@ -211,31 +211,3 @@ class TestMCPClientProxy:
 
         assert len(registry) == 0
         assert manager.get_status()["total_tools"] == 0
-
-
-# ===========================================================================
-# MCP Server — tool exposure
-# ===========================================================================
-
-
-class TestMCPServer:
-    def test_register_native_tools(self):
-        """Verify _register_native_tools populates the registry."""
-        from claw_phone.config import config
-        from claw_phone.mcp.server import _register_native_tools
-
-        config.load()
-        registry = ToolRegistry()
-        _register_native_tools(registry, config.data)
-
-        # Should have at least shell & files
-        assert "execute_shell" in registry or "shell" in registry or len(registry) > 0
-
-    def test_excluded_tools_not_exposed(self):
-        """Verify that _EXCLUDED_TOOLS are not registered on the FastMCP server."""
-        from claw_phone.mcp.server import _EXCLUDED_TOOLS
-
-        assert "send_message" in _EXCLUDED_TOOLS
-        assert "send_file" in _EXCLUDED_TOOLS
-        assert "cron_create" in _EXCLUDED_TOOLS
-        assert "spawn_agent" in _EXCLUDED_TOOLS

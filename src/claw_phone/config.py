@@ -62,9 +62,6 @@ DEFAULTS: dict[str, Any] = {
     },
     "mcp": {
         "servers": [],
-        "server": {
-            "enabled": True,
-        },
     },
 }
 
