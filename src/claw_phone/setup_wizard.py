@@ -45,8 +45,7 @@ tools:
   files:
     enabled: true
     allowed_paths:
-      - "/sdcard"
-      - "/data/data/com.termux/files/home"
+{allowed_paths}
   web_search:
     enabled: true
     max_results: 5
@@ -74,12 +73,24 @@ logging:
 """
 
 
-def _copy_defaults() -> None:
-    """Copy default prompt files (IDENTITY.md, USER.md, SYSTEM.md) if they don't exist."""
-    import importlib.resources
+def _detect_platform() -> str:
+    """Detect the current platform: 'termux', 'mac', or 'linux'."""
+    import os
+    # Check for Termux
+    if os.path.exists("/data/data/com.termux"):
+        return "termux"
+    if sys.platform == "darwin":
+        return "mac"
+    return "linux"
 
+
+def _copy_defaults() -> None:
+    """Copy default prompt files, selecting SYSTEM.md based on platform."""
     defaults_dir = Path(__file__).resolve().parent.parent.parent / "defaults"
-    for filename in ("IDENTITY.md", "USER.md", "SYSTEM.md"):
+    platform = _detect_platform()
+    print(f"  Detected platform: {platform}")
+
+    for filename in ("IDENTITY.md", "USER.md"):
         target = CLAW_DIR / filename
         if target.exists():
             continue
@@ -87,6 +98,19 @@ def _copy_defaults() -> None:
         if source.exists():
             target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
             print(f"  Created {target}")
+
+    # SYSTEM.md — pick platform-specific version
+    target = CLAW_DIR / "SYSTEM.md"
+    if not target.exists():
+        system_file = {
+            "termux": "SYSTEM.md",
+            "mac": "SYSTEM.mac.md",
+            "linux": "SYSTEM.linux.md",
+        }.get(platform, "SYSTEM.md")
+        source = defaults_dir / system_file
+        if source.exists():
+            target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            print(f"  Created {target} (from {system_file})")
 
 
 def _prompt_required(label: str) -> str:
@@ -161,12 +185,20 @@ def run() -> None:
     groq_key = _prompt_optional("Groq API key (for voice messages)")
 
     # 4. Write config
+    platform = _detect_platform()
+    allowed_paths = {
+        "termux": '      - "/sdcard"\n      - "/data/data/com.termux/files/home"',
+        "mac": f'      - "{Path.home()}"',
+        "linux": f'      - "{Path.home()}"',
+    }.get(platform, f'      - "{Path.home()}"')
+
     config_content = CONFIG_TEMPLATE.format(
         bot_token=bot_token,
         owner_id=owner_id,
         openrouter_key=openrouter_key,
         tavily_key=tavily_key,
         groq_key=groq_key,
+        allowed_paths=allowed_paths,
     )
     CONFIG_PATH.write_text(config_content, encoding="utf-8")
     # Restrict permissions — config contains secrets
