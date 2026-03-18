@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from claw_phone.router.openrouter import (
+from spare_paw.router.openrouter import (
     OPENROUTER_URL,
     OpenRouterClient,
     OpenRouterError,
 )
-from claw_phone.router.tool_loop import run_tool_loop
+from spare_paw.router.tool_loop import run_tool_loop
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +119,7 @@ class TestRetryLogic:
         client = OpenRouterClient(api_key="k", semaphore=asyncio.Semaphore(1))
         client._session = mock_session
 
-        with patch("claw_phone.router.openrouter.asyncio.sleep", new_callable=AsyncMock):
+        with patch("spare_paw.router.openrouter.asyncio.sleep", new_callable=AsyncMock):
             result = await client.chat([], model="m")
 
         assert result == success_data

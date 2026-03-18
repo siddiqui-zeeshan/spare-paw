@@ -1,4 +1,4 @@
-"""Interactive setup wizard for first-time claw-phone configuration.
+"""Interactive setup wizard for first-time spare-paw configuration.
 
 Prompts for API keys, writes config.yaml, and initializes the database.
 No API validation in v1 — just writes the config and trusts the user.
@@ -10,7 +10,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-CLAW_DIR = Path.home() / ".claw-phone"
+CLAW_DIR = Path.home() / ".spare-paw"
 CONFIG_PATH = CLAW_DIR / "config.yaml"
 
 CONFIG_TEMPLATE = """\
@@ -142,7 +142,7 @@ def run() -> None:
     """Run the interactive setup wizard."""
     print()
     print("=" * 52)
-    print("    claw-phone setup wizard")
+    print("    spare-paw setup wizard")
     print("=" * 52)
     print()
     print("This will create your configuration and database.")
@@ -215,7 +215,7 @@ def run() -> None:
 
 def _init_database() -> None:
     """Initialize the SQLite database synchronously."""
-    from claw_phone.db import init_db
+    from spare_paw.db import init_db
 
     print("Initializing database...")
     asyncio.run(init_db())
@@ -229,9 +229,9 @@ def _print_success() -> None:
     print("    Setup complete!")
     print("=" * 52)
     print()
-    print("To start claw-phone:")
+    print("To start spare-paw:")
     print()
-    print("  python -m claw_phone gateway")
+    print("  python -m spare_paw gateway")
     print()
     print("Or with the watchdog (recommended for Termux):")
     print()

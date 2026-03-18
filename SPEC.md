@@ -1,4 +1,4 @@
-# claw-phone — Complete Specification
+# spare-paw — Complete Specification
 
 ## Overview
 
@@ -112,7 +112,7 @@ The application uses a **single async event loop** with a **ProcessPoolExecutor*
 
 A simple, reliable context strategy that stores all messages and assembles a sliding window for each model call. Designed as a clean interface so LCM can replace it later without touching other components.
 
-**Database:** SQLite at `~/.claw-phone/claw.db`
+**Database:** SQLite at `~/.spare-paw/spare-paw.db`
 
 #### Schema
 
@@ -251,7 +251,7 @@ List all scheduled tasks.
 ### 5. Cron Scheduler
 
 **Library:** APScheduler (AsyncIOScheduler)
-**Persistence:** SQLite (cron_jobs table in claw.db)
+**Persistence:** SQLite (cron_jobs table in spare-paw.db)
 **Startup:** Loads all enabled crons from DB and schedules them.
 
 **Execution flow:**
@@ -283,16 +283,16 @@ List all scheduled tasks.
 
 **Termux setup:**
 - `termux-wake-lock` to prevent Android killing the process
-- Main process: `python -m claw_phone gateway`
+- Main process: `python -m spare_paw gateway`
 - Watchdog: bash script that monitors heartbeat file freshness (not just PID liveness)
 
 **Logging:**
 - Python `logging` module
 - File handler with rotation (10MB max, 3 backups)
-- Log location: `~/.claw-phone/logs/`
+- Log location: `~/.spare-paw/logs/`
 
 **Health heartbeat:**
-- Main event loop touches `~/.claw-phone/heartbeat` every 30s
+- Main event loop touches `~/.spare-paw/heartbeat` every 30s
 - Watchdog checks: if heartbeat file is older than 90s, kill and restart
 - Catches event loop starvation and deadlocks, not just crashes
 
@@ -301,10 +301,10 @@ List all scheduled tasks.
 
 ### 8. Setup / Onboarding
 
-**Command:** `python -m claw_phone setup`
+**Command:** `python -m spare_paw setup`
 
 Interactive wizard that:
-1. Creates `~/.claw-phone/` directory structure
+1. Creates `~/.spare-paw/` directory structure
 2. Generates `config.yaml` from template
 3. Prompts for required API keys (OpenRouter, Telegram bot token)
 4. Prompts for optional API keys (Brave Search, Groq)
@@ -317,7 +317,7 @@ Interactive wizard that:
 
 ## Config File
 
-Location: `~/.claw-phone/config.yaml`
+Location: `~/.spare-paw/config.yaml`
 
 ```yaml
 telegram:
@@ -384,14 +384,14 @@ logging:
 ## Project Structure
 
 ```
-claw-phone/
+spare-paw/
 ├── pyproject.toml
 ├── SPEC.md
 ├── scripts/
 │   ├── watchdog.sh          # Heartbeat-aware restart script
 │   └── install-termux.sh    # Termux dependency installer
 ├── src/
-│   └── claw_phone/
+│   └── spare_paw/
 │       ├── __init__.py
 │       ├── __main__.py      # Entry point: setup / gateway
 │       ├── config.py        # Config loading (YAML + runtime overrides)
@@ -451,16 +451,16 @@ aiosqlite>=0.20                  # Async SQLite
 pkg update && pkg upgrade
 pkg install python python-pip git
 
-# Install claw-phone
+# Install spare-paw
 git clone <repo>
-cd claw-phone
+cd spare-paw
 pip install --break-system-packages -e .
 
 # Setup (interactive wizard)
-python -m claw_phone setup
+python -m spare_paw setup
 
 # Run
-python -m claw_phone gateway
+python -m spare_paw gateway
 
 # With watchdog (recommended)
 bash scripts/watchdog.sh

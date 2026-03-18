@@ -1,10 +1,10 @@
-"""Entry point for claw-phone: python -m claw_phone [setup|gateway]."""
+"""Entry point for spare-paw: python -m spare_paw [setup|gateway]."""
 
 import sys
 
 
 USAGE = """\
-Usage: python -m claw_phone <command>
+Usage: python -m spare_paw <command>
 
 Commands:
   setup     Run the interactive setup wizard
@@ -20,11 +20,11 @@ def main() -> None:
     command = sys.argv[1].lower()
 
     if command == "setup":
-        from claw_phone.setup_wizard import run
+        from spare_paw.setup_wizard import run
 
         run()
     elif command == "gateway":
-        from claw_phone.gateway import run
+        from spare_paw.gateway import run
 
         run()
     else:

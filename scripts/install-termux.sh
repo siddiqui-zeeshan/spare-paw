@@ -1,12 +1,12 @@
 #!/bin/bash
-# Install dependencies for claw-phone on Termux
+# Install dependencies for spare-paw on Termux
 #
 # Run this script once after cloning the repo:
 #   bash scripts/install-termux.sh
 
 set -euo pipefail
 
-echo "=== claw-phone Termux installer ==="
+echo "=== spare-paw Termux installer ==="
 echo ""
 
 # 1. Update Termux packages
@@ -17,19 +17,19 @@ pkg update -y && pkg upgrade -y
 echo "[2/4] Installing Python, pip, and git..."
 pkg install -y python python-pip git
 
-# 3. Install claw-phone in editable mode
-echo "[3/4] Installing claw-phone and Python dependencies..."
+# 3. Install spare-paw in editable mode
+echo "[3/4] Installing spare-paw and Python dependencies..."
 pip install --break-system-packages -e .
 
 # 4. Create runtime directory
-echo "[4/4] Creating ~/.claw-phone directory..."
-mkdir -p "$HOME/.claw-phone/logs"
+echo "[4/4] Creating ~/.spare-paw directory..."
+mkdir -p "$HOME/.spare-paw/logs"
 
 echo ""
 echo "=== Installation complete ==="
 echo ""
 echo "Next steps:"
-echo "  1. Run the setup wizard:  python -m claw_phone setup"
-echo "  2. Start the gateway:     python -m claw_phone gateway"
+echo "  1. Run the setup wizard:  python -m spare_paw setup"
+echo "  2. Start the gateway:     python -m spare_paw gateway"
 echo "  3. Or use the watchdog:   bash scripts/watchdog.sh"
 echo ""

@@ -11,11 +11,11 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from claw_phone.db import get_db
-from claw_phone.router.tool_loop import run_tool_loop
+from spare_paw.db import get_db
+from spare_paw.router.tool_loop import run_tool_loop
 
 if TYPE_CHECKING:
-    from claw_phone.gateway import AppState
+    from spare_paw.gateway import AppState
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ async def execute_cron(
         )
 
         # 2. Build system prompt (includes IDENTITY.md, USER.md, SYSTEM.md)
-        from claw_phone.bot.handler import _build_system_prompt
+        from spare_paw.bot.handler import _build_system_prompt
 
         system_prompt = await _build_system_prompt(app_state.config)
 

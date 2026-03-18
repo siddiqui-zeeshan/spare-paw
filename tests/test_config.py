@@ -1,4 +1,4 @@
-"""Tests for claw_phone.config — YAML loading, deep merge, dot-notation, overrides."""
+"""Tests for spare_paw.config — YAML loading, deep merge, dot-notation, overrides."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from claw_phone.config import Config, DEFAULTS, _deep_merge, _resolve_dot, _set_dot
+from spare_paw.config import Config, DEFAULTS, _deep_merge, _resolve_dot, _set_dot
 
 
 # ---------------------------------------------------------------------------

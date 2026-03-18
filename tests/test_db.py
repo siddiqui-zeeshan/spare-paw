@@ -1,4 +1,4 @@
-"""Tests for claw_phone.db — schema init, FTS5 triggers, close."""
+"""Tests for spare_paw.db — schema init, FTS5 triggers, close."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 import pytest_asyncio
 
-import claw_phone.db as db_mod
+import spare_paw.db as db_mod
 
 
 # ---------------------------------------------------------------------------
@@ -19,8 +19,8 @@ import claw_phone.db as db_mod
 @pytest_asyncio.fixture(autouse=True)
 async def _isolate_db(tmp_path):
     """Redirect DB_DIR / DB_PATH to a temp directory and reset the singleton."""
-    tmp_db_dir = tmp_path / ".claw-phone"
-    tmp_db_path = tmp_db_dir / "claw.db"
+    tmp_db_dir = tmp_path / ".spare-paw"
+    tmp_db_path = tmp_db_dir / "spare-paw.db"
     tmp_db_dir.mkdir()
 
     with (

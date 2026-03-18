@@ -33,8 +33,8 @@ async def _run_agent(
     _agents[agent_id]["started_at"] = datetime.now(timezone.utc).isoformat()
 
     try:
-        from claw_phone.bot.handler import _build_system_prompt
-        from claw_phone.router.tool_loop import run_tool_loop
+        from spare_paw.bot.handler import _build_system_prompt
+        from spare_paw.router.tool_loop import run_tool_loop
 
         # Build system prompt
         system_prompt = await _build_system_prompt(app_state.config)

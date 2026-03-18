@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 from bs4 import BeautifulSoup
 
 if TYPE_CHECKING:
-    from claw_phone.tools.registry import ToolRegistry
+    from spare_paw.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 

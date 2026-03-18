@@ -7,14 +7,14 @@ After implementing any new feature or significant change, automatically update R
 ## Deployment
 
 The phone is accessible via `ssh termux-phone`. After code changes:
-1. `scp` changed files to `termux-phone:~/claw-phone/...`
-2. `ssh termux-phone "pkill -f 'claw_phone'"` to stop
-3. Restart: `ssh termux-phone "cd ~/claw-phone && nohup python -m claw_phone gateway > /data/data/com.termux/files/usr/tmp/claw.log 2>&1 &"`
-4. Check logs: `ssh termux-phone "tail -N /data/data/com.termux/files/usr/tmp/claw.log | grep -v 'getUpdates'"`
+1. `scp` changed files to `termux-phone:~/spare-paw/...`
+2. `ssh termux-phone "pkill -f 'spare_paw'"` to stop
+3. Restart: `ssh termux-phone "cd ~/spare-paw && nohup python -m spare_paw gateway > /data/data/com.termux/files/usr/tmp/spare-paw.log 2>&1 &"`
+4. Check logs: `ssh termux-phone "tail -N /data/data/com.termux/files/usr/tmp/spare-paw.log | grep -v 'getUpdates'"`
 
 ## Prompt files
 
-The bot loads personality/context from `~/.claw-phone/` on every turn:
+The bot loads personality/context from `~/.spare-paw/` on every turn:
 - `IDENTITY.md` — bot personality
 - `USER.md` — user preferences
 - `SYSTEM.md` — device capabilities and behavior rules

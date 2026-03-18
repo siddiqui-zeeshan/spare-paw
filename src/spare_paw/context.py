@@ -22,8 +22,8 @@ from typing import Any
 
 import tiktoken
 
-from claw_phone.config import config
-from claw_phone.db import get_db
+from spare_paw.config import config
+from spare_paw.db import get_db
 
 logger = logging.getLogger(__name__)
 

@@ -22,11 +22,11 @@ from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, fil
 
 from pathlib import Path
 
-from claw_phone.bot.commands import register_commands
-from claw_phone.bot.voice import VoiceTranscriptionError, transcribe
+from spare_paw.bot.commands import register_commands
+from spare_paw.bot.voice import VoiceTranscriptionError, transcribe
 
-# Prompt files loaded from ~/.claw-phone/ in this order
-_PROMPT_DIR = Path.home() / ".claw-phone"
+# Prompt files loaded from ~/.spare-paw/ in this order
+_PROMPT_DIR = Path.home() / ".spare-paw"
 _PROMPT_FILES = ["IDENTITY.md", "USER.md", "SYSTEM.md"]
 
 if TYPE_CHECKING:
@@ -146,7 +146,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
 
         # 2. Import context module
-        from claw_phone import context as ctx_module
+        from spare_paw import context as ctx_module
 
         # 3. Check if this is a reply to a cron result
         cron_context = _extract_cron_context(update)
@@ -189,7 +189,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         tool_schemas = app_state.tool_registry.get_schemas()
         max_iterations = app_state.config.get("agent.max_tool_iterations", 20)
 
-        from claw_phone.router.tool_loop import run_tool_loop
+        from spare_paw.router.tool_loop import run_tool_loop
 
         response_text = await run_tool_loop(
             client=app_state.router_client,
@@ -237,7 +237,7 @@ async def _build_system_prompt(config: Any) -> str:
             except OSError:
                 logger.warning("Failed to read prompt file: %s", path)
 
-    # Load skills from ~/.claw-phone/skills/
+    # Load skills from ~/.spare-paw/skills/
     skills_dir = _PROMPT_DIR / "skills"
     if skills_dir.is_dir():
         for skill_path in sorted(skills_dir.glob("*.md")):
@@ -250,7 +250,7 @@ async def _build_system_prompt(config: Any) -> str:
 
     # Inject persistent memories
     try:
-        from claw_phone.tools.memory import get_all_memories
+        from spare_paw.tools.memory import get_all_memories
         memories = await get_all_memories()
         if memories:
             mem_lines = [f"- {m['key']}: {m['value']}" for m in memories]
@@ -411,7 +411,7 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data.startswith("approve:"):
         tool_name = data[len("approve:"):]
-        from claw_phone.tools.custom_tools import approve_tool
+        from spare_paw.tools.custom_tools import approve_tool
         import json
         result_str = await approve_tool(tool_name, app_state.tool_registry, app_state)
         result = json.loads(result_str)
@@ -423,7 +423,7 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     elif data.startswith("reject:"):
         tool_name = data[len("reject:"):]
         # Delete pending files
-        from claw_phone.tools.custom_tools import PENDING_DIR
+        from spare_paw.tools.custom_tools import PENDING_DIR
         for ext in (".json", ".sh"):
             path = PENDING_DIR / f"{tool_name}{ext}"
             if path.exists():

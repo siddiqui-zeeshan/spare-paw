@@ -8,8 +8,8 @@ from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from claw_phone.router.openrouter import OpenRouterClient
-    from claw_phone.tools.registry import ToolRegistry
+    from spare_paw.router.openrouter import OpenRouterClient
+    from spare_paw.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 

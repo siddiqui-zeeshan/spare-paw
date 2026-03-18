@@ -1,4 +1,4 @@
-"""Tests for claw_phone tools — registry, shell, and files."""
+"""Tests for spare_paw tools — registry, shell, and files."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ import os
 
 import pytest
 
-from claw_phone.tools.registry import ToolRegistry
-from claw_phone.tools.shell import execute_shell
-from claw_phone.tools.files import execute_files, _check_path
+from spare_paw.tools.registry import ToolRegistry
+from spare_paw.tools.shell import execute_shell
+from spare_paw.tools.files import execute_files, _check_path
 
 
 # ===========================================================================

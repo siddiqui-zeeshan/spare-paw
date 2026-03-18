@@ -1,7 +1,7 @@
 """Custom tool creation and management.
 
 Allows the LLM to create shell-script-based tools that persist across restarts.
-Tools are stored as shell scripts in ``~/.claw-phone/custom_tools/`` with
+Tools are stored as shell scripts in ``~/.spare-paw/custom_tools/`` with
 accompanying JSON metadata files.
 
 The ``tool_create`` meta-tool lets the LLM propose a new tool, which requires
@@ -20,11 +20,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from claw_phone.tools.registry import ToolRegistry
+    from spare_paw.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-CUSTOM_TOOLS_DIR = Path.home() / ".claw-phone" / "custom_tools"
+CUSTOM_TOOLS_DIR = Path.home() / ".spare-paw" / "custom_tools"
 PENDING_DIR = CUSTOM_TOOLS_DIR / ".pending"
 
 # ---------------------------------------------------------------------------
@@ -169,7 +169,7 @@ def _register_custom_tool(
 
 
 def load_custom_tools(registry: ToolRegistry, executor: Any) -> None:
-    """Scan ``~/.claw-phone/custom_tools/`` and register all active tools."""
+    """Scan ``~/.spare-paw/custom_tools/`` and register all active tools."""
     CUSTOM_TOOLS_DIR.mkdir(parents=True, exist_ok=True)
     PENDING_DIR.mkdir(parents=True, exist_ok=True)
 

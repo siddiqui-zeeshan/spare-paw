@@ -55,3 +55,15 @@ logging:
   level: "INFO"
   max_bytes: 10485760  # 10MB
   backup_count: 3
+
+# MCP (Model Context Protocol) — connect to external tool servers
+mcp:
+  servers: []
+    # - name: "github"
+    #   command: "npx"
+    #   args: ["-y", "@modelcontextprotocol/server-github"]
+    #   env:
+    #     GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_..."
+    # - name: "filesystem"
+    #   command: "npx"
+    #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/sdcard"]

@@ -1,7 +1,7 @@
 #!/bin/bash
-# claw-phone watchdog — monitors heartbeat file freshness
+# spare-paw watchdog — monitors heartbeat file freshness
 #
-# Starts claw-phone, then loops every 30s checking:
+# Starts spare-paw, then loops every 30s checking:
 #   1. Is the process alive? (PID file)
 #   2. Is the heartbeat file fresh? (< MAX_AGE seconds old)
 #
@@ -10,9 +10,9 @@
 
 set -euo pipefail
 
-CLAW_DIR="$HOME/.claw-phone"
+CLAW_DIR="$HOME/.spare-paw"
 HEARTBEAT_FILE="$CLAW_DIR/heartbeat"
-PID_FILE="$CLAW_DIR/claw.pid"
+PID_FILE="$CLAW_DIR/spare-paw.pid"
 LOG_DIR="$CLAW_DIR/logs"
 LOG_FILE="$LOG_DIR/watchdog.log"
 MAX_AGE=90  # seconds before heartbeat is considered stale
@@ -30,11 +30,11 @@ start_claw() {
     log "Acquiring Termux wake lock"
     termux-wake-lock 2>/dev/null || true
 
-    log "Starting claw-phone gateway"
-    python -m claw_phone gateway >> "$LOG_DIR/gateway-stdout.log" 2>&1 &
+    log "Starting spare-paw gateway"
+    python -m spare_paw gateway >> "$LOG_DIR/gateway-stdout.log" 2>&1 &
     local pid=$!
     echo "$pid" > "$PID_FILE"
-    log "Started claw-phone with PID $pid"
+    log "Started spare-paw with PID $pid"
 }
 
 stop_claw() {
@@ -42,7 +42,7 @@ stop_claw() {
         local pid
         pid=$(cat "$PID_FILE")
         if kill -0 "$pid" 2>/dev/null; then
-            log "Killing claw-phone PID $pid"
+            log "Killing spare-paw PID $pid"
             kill "$pid" 2>/dev/null || true
             # Wait briefly for graceful shutdown
             for i in 1 2 3 4 5; do

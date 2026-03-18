@@ -1,4 +1,4 @@
-"""Configuration loading from ~/.claw-phone/config.yaml with runtime overrides.
+"""Configuration loading from ~/.spare-paw/config.yaml with runtime overrides.
 
 Thread-safe config with dot-notation access and deep merge against defaults.
 """
@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-CONFIG_DIR = Path.home() / ".claw-phone"
+CONFIG_DIR = Path.home() / ".spare-paw"
 CONFIG_PATH = CONFIG_DIR / "config.yaml"
 
 DEFAULTS: dict[str, Any] = {
@@ -59,6 +59,9 @@ DEFAULTS: dict[str, Any] = {
         "level": "INFO",
         "max_bytes": 10485760,
         "backup_count": 3,
+    },
+    "mcp": {
+        "servers": [],
     },
 }
 

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from claw_phone.cron.scheduler import CronScheduler
+from spare_paw.cron.scheduler import CronScheduler
 
 
 # ---------------------------------------------------------------------------
@@ -135,11 +135,11 @@ class TestExecuteCronSuccess:
     """Test execute_cron sends the result to Telegram on success."""
 
     @pytest.mark.asyncio
-    @patch("claw_phone.cron.executor._maybe_delete_once", new_callable=AsyncMock)
-    @patch("claw_phone.cron.executor._update_cron_result", new_callable=AsyncMock)
-    @patch("claw_phone.cron.executor.run_tool_loop", new_callable=AsyncMock)
+    @patch("spare_paw.cron.executor._maybe_delete_once", new_callable=AsyncMock)
+    @patch("spare_paw.cron.executor._update_cron_result", new_callable=AsyncMock)
+    @patch("spare_paw.cron.executor.run_tool_loop", new_callable=AsyncMock)
     async def test_sends_result_to_telegram(self, mock_tool_loop, mock_update, _mock_delete):
-        from claw_phone.cron.executor import execute_cron
+        from spare_paw.cron.executor import execute_cron
 
         mock_tool_loop.return_value = "Cron result text"
         app_state = _make_app_state()
@@ -172,11 +172,11 @@ class TestExecuteCronError:
     """Test execute_cron handles errors and sends warning message."""
 
     @pytest.mark.asyncio
-    @patch("claw_phone.cron.executor._maybe_delete_once", new_callable=AsyncMock)
-    @patch("claw_phone.cron.executor._update_cron_result", new_callable=AsyncMock)
-    @patch("claw_phone.cron.executor.run_tool_loop", new_callable=AsyncMock)
+    @patch("spare_paw.cron.executor._maybe_delete_once", new_callable=AsyncMock)
+    @patch("spare_paw.cron.executor._update_cron_result", new_callable=AsyncMock)
+    @patch("spare_paw.cron.executor.run_tool_loop", new_callable=AsyncMock)
     async def test_sends_warning_on_failure(self, mock_tool_loop, mock_update, _mock_delete):
-        from claw_phone.cron.executor import execute_cron
+        from spare_paw.cron.executor import execute_cron
 
         mock_tool_loop.side_effect = RuntimeError("model exploded")
         app_state = _make_app_state()
@@ -201,12 +201,12 @@ class TestExecuteCronError:
         )
 
     @pytest.mark.asyncio
-    @patch("claw_phone.cron.executor._maybe_delete_once", new_callable=AsyncMock)
-    @patch("claw_phone.cron.executor._update_cron_result", new_callable=AsyncMock)
-    @patch("claw_phone.cron.executor.run_tool_loop", new_callable=AsyncMock)
+    @patch("spare_paw.cron.executor._maybe_delete_once", new_callable=AsyncMock)
+    @patch("spare_paw.cron.executor._update_cron_result", new_callable=AsyncMock)
+    @patch("spare_paw.cron.executor.run_tool_loop", new_callable=AsyncMock)
     async def test_error_notification_failure_does_not_propagate(self, mock_tool_loop, mock_update, _mock_delete):  # noqa: E501
         """If sending the error notification itself fails, execute_cron still doesn't raise."""
-        from claw_phone.cron.executor import execute_cron
+        from spare_paw.cron.executor import execute_cron
 
         mock_tool_loop.side_effect = RuntimeError("model down")
         app_state = _make_app_state()
@@ -233,7 +233,7 @@ class TestOneShotCronAutoDelete:
     @pytest.mark.asyncio
     async def test_one_shot_cron_auto_deletes(self):
         """A cron with metadata={"once": true} should be deleted after execution."""
-        from claw_phone.cron.executor import _maybe_delete_once
+        from spare_paw.cron.executor import _maybe_delete_once
 
         # Build a mock DB that returns a row with once=true metadata
         mock_row = {"metadata": '{"once": true}'}
@@ -248,7 +248,7 @@ class TestOneShotCronAutoDelete:
         app_state.scheduler = AsyncMock()
         app_state.scheduler.remove_job = AsyncMock()
 
-        with patch("claw_phone.cron.executor.get_db", return_value=mock_db):
+        with patch("spare_paw.cron.executor.get_db", return_value=mock_db):
             await _maybe_delete_once(app_state, "cron-once-1")
 
         # Verify DELETE was issued
@@ -265,7 +265,7 @@ class TestOneShotCronAutoDelete:
     @pytest.mark.asyncio
     async def test_non_once_cron_is_not_deleted(self):
         """A cron without once=true in metadata should NOT be deleted."""
-        from claw_phone.cron.executor import _maybe_delete_once
+        from spare_paw.cron.executor import _maybe_delete_once
 
         mock_row = {"metadata": '{"repeat": true}'}
         mock_cursor = AsyncMock()
@@ -277,7 +277,7 @@ class TestOneShotCronAutoDelete:
         app_state = _make_app_state()
         app_state.scheduler = AsyncMock()
 
-        with patch("claw_phone.cron.executor.get_db", return_value=mock_db):
+        with patch("spare_paw.cron.executor.get_db", return_value=mock_db):
             await _maybe_delete_once(app_state, "cron-repeat")
 
         # Only the SELECT should have been called, no DELETE

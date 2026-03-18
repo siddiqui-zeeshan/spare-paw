@@ -12,10 +12,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from claw_phone.db import get_db
+from spare_paw.db import get_db
 
 if TYPE_CHECKING:
-    from claw_phone.tools.registry import ToolRegistry
+    from spare_paw.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 

@@ -1,4 +1,4 @@
-"""Tests for claw_phone.tools.memory — remember, recall, forget, list."""
+"""Tests for spare_paw.tools.memory — remember, recall, forget, list."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 import pytest_asyncio
 
-import claw_phone.db as db_mod
+import spare_paw.db as db_mod
 
 
 # ---------------------------------------------------------------------------
@@ -18,8 +18,8 @@ import claw_phone.db as db_mod
 @pytest_asyncio.fixture(autouse=True)
 async def _isolate_db(tmp_path):
     """Redirect DB to a temp directory and reset the singleton."""
-    tmp_db_dir = tmp_path / ".claw-phone"
-    tmp_db_path = tmp_db_dir / "claw.db"
+    tmp_db_dir = tmp_path / ".spare-paw"
+    tmp_db_path = tmp_db_dir / "spare-paw.db"
     tmp_db_dir.mkdir()
 
     with (
@@ -38,7 +38,7 @@ async def _isolate_db(tmp_path):
 
 @pytest.mark.asyncio
 async def test_remember_creates_new_memory():
-    from claw_phone.tools.memory import _handle_remember
+    from spare_paw.tools.memory import _handle_remember
 
     result = json.loads(await _handle_remember("wifi_password", "hunter2"))
     assert result["status"] == "created"
@@ -48,7 +48,7 @@ async def test_remember_creates_new_memory():
 
 @pytest.mark.asyncio
 async def test_remember_updates_existing_memory():
-    from claw_phone.tools.memory import _handle_remember
+    from spare_paw.tools.memory import _handle_remember
 
     await _handle_remember("color", "blue")
     result = json.loads(await _handle_remember("color", "red"))
@@ -62,7 +62,7 @@ async def test_remember_updates_existing_memory():
 
 @pytest.mark.asyncio
 async def test_recall_finds_by_fts():
-    from claw_phone.tools.memory import _handle_recall, _handle_remember
+    from spare_paw.tools.memory import _handle_recall, _handle_remember
 
     await _handle_remember("birthday", "January 15th")
     result = json.loads(await _handle_recall("birthday"))
@@ -73,7 +73,7 @@ async def test_recall_finds_by_fts():
 
 @pytest.mark.asyncio
 async def test_recall_returns_empty_for_no_match():
-    from claw_phone.tools.memory import _handle_recall
+    from spare_paw.tools.memory import _handle_recall
 
     result = json.loads(await _handle_recall("xyznonexistent999"))
     assert result["results"] == []
@@ -86,7 +86,7 @@ async def test_recall_returns_empty_for_no_match():
 
 @pytest.mark.asyncio
 async def test_forget_memory_deletes():
-    from claw_phone.tools.memory import _handle_forget_memory, _handle_remember
+    from spare_paw.tools.memory import _handle_forget_memory, _handle_remember
 
     await _handle_remember("temp_note", "delete me")
     result = json.loads(await _handle_forget_memory("temp_note"))
@@ -96,7 +96,7 @@ async def test_forget_memory_deletes():
 
 @pytest.mark.asyncio
 async def test_forget_memory_nonexistent_returns_error():
-    from claw_phone.tools.memory import _handle_forget_memory
+    from spare_paw.tools.memory import _handle_forget_memory
 
     result = json.loads(await _handle_forget_memory("no_such_key"))
     assert "error" in result
@@ -109,7 +109,7 @@ async def test_forget_memory_nonexistent_returns_error():
 
 @pytest.mark.asyncio
 async def test_list_memories_returns_all():
-    from claw_phone.tools.memory import _handle_list_memories, _handle_remember
+    from spare_paw.tools.memory import _handle_list_memories, _handle_remember
 
     await _handle_remember("k1", "v1")
     await _handle_remember("k2", "v2")
@@ -125,7 +125,7 @@ async def test_list_memories_returns_all():
 
 @pytest.mark.asyncio
 async def test_get_all_memories_for_prompt_injection():
-    from claw_phone.tools.memory import _handle_remember, get_all_memories
+    from spare_paw.tools.memory import _handle_remember, get_all_memories
 
     await _handle_remember("name", "Zeeshan")
     await _handle_remember("city", "Karachi")

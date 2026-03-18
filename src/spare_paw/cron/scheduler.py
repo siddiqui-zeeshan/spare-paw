@@ -14,10 +14,10 @@ from typing import TYPE_CHECKING
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from claw_phone.db import get_db
+from spare_paw.db import get_db
 
 if TYPE_CHECKING:
-    from claw_phone.gateway import AppState
+    from spare_paw.gateway import AppState
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,7 @@ class CronScheduler:
         tools_allowed: list[str] | None,
     ) -> None:
         """Job callback — delegates to executor.execute_cron."""
-        from claw_phone.cron.executor import execute_cron
+        from spare_paw.cron.executor import execute_cron
 
         await execute_cron(self._app_state, cron_id, prompt, model, tools_allowed)
 

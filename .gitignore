@@ -4,7 +4,8 @@ __pycache__/
 .env
 config.yaml
 *.db
-.claw-phone/
+.spare-paw/
 dist/
 build/
 .pytest_cache/
+META-INF/

@@ -1,4 +1,4 @@
-"""Tests for claw_phone.tools.subagent — spawn and list agents."""
+"""Tests for spare_paw.tools.subagent — spawn and list agents."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import claw_phone.tools.subagent as subagent_mod
+import spare_paw.tools.subagent as subagent_mod
 
 
 # ---------------------------------------------------------------------------

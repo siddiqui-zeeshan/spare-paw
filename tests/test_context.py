@@ -1,4 +1,4 @@
-"""Tests for claw_phone.context — sliding window context manager."""
+"""Tests for spare_paw.context — sliding window context manager."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import pytest
 import pytest_asyncio
 import aiosqlite
 
-import claw_phone.db as db_mod
-from claw_phone.context import ingest, assemble, search, get_or_create_conversation, new_conversation
+import spare_paw.db as db_mod
+from spare_paw.context import ingest, assemble, search, get_or_create_conversation, new_conversation
 
 
 @pytest_asyncio.fixture()
@@ -82,7 +82,7 @@ async def test_assemble_returns_openai_format_with_system_prompt(_init_db):
 @pytest.mark.asyncio
 async def test_assemble_respects_token_budget(_init_db, monkeypatch):
     """When the token budget is tiny, the oldest messages should be dropped."""
-    from claw_phone import config as config_mod
+    from spare_paw import config as config_mod
 
     # Set a very small budget so only 1-2 messages fit
     config_mod.config.set_override("context.token_budget", 50)

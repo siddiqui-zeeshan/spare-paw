@@ -8,6 +8,7 @@ Commands:
     /forget                             — start a new conversation
     /model <name>                       — shortcut for /config model
     /approve <name>                     — approve a pending custom tool
+    /mcp                                — list connected MCP servers
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
 
-from claw_phone.db import DB_PATH, get_db
+from spare_paw.db import DB_PATH, get_db
 
 if TYPE_CHECKING:
     from telegram.ext import Application
@@ -413,7 +414,7 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("Usage: /search <query>")
         return
 
-    from claw_phone import context as ctx_module
+    from spare_paw import context as ctx_module
 
     try:
         results = await ctx_module.search(query)
@@ -451,7 +452,7 @@ async def _forget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not _is_owner(update, app_state):
         return
 
-    from claw_phone import context as ctx_module
+    from spare_paw import context as ctx_module
 
     await ctx_module.new_conversation()
     await update.message.reply_text(
@@ -525,7 +526,7 @@ async def _approve_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if not context.args:
         # List pending tools as a hint
-        from claw_phone.tools.custom_tools import PENDING_DIR
+        from spare_paw.tools.custom_tools import PENDING_DIR
 
         pending: list[str] = []
         if PENDING_DIR.exists():
@@ -543,7 +544,7 @@ async def _approve_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     name = context.args[0]
 
-    from claw_phone.tools.custom_tools import approve_tool
+    from spare_paw.tools.custom_tools import approve_tool
 
     result_str = await approve_tool(name, app_state.tool_registry, app_state)
     result = json.loads(result_str)
@@ -572,7 +573,7 @@ async def _logs_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         except ValueError:
             pass
 
-    log_path = Path.home() / ".claw-phone" / "logs" / "claw-phone.log"
+    log_path = Path.home() / ".spare-paw" / "logs" / "spare-paw.log"
     if not log_path.exists():
         await update.message.reply_text("Log file not found.")
         return
@@ -603,7 +604,7 @@ async def _agents_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not _is_owner(update, app_state):
         return
 
-    from claw_phone.tools.subagent import _agents
+    from spare_paw.tools.subagent import _agents
 
     if not _agents:
         await update.message.reply_text("No agents have been spawned.")
@@ -616,6 +617,37 @@ async def _agents_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         lines.append(f"  {aid[:8]}  {name}  [{status}]")
 
     text = f"Agents ({len(_agents)}):\n\n" + "\n".join(lines[:20])
+    await update.message.reply_text(text)
+
+
+# ---------------------------------------------------------------------------
+# /mcp — list connected MCP servers and tools
+# ---------------------------------------------------------------------------
+
+async def _mcp_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show connected MCP servers and their tools."""
+    app_state = _get_app_state(context)
+    if not _is_owner(update, app_state):
+        return
+
+    mcp_client = getattr(app_state, "mcp_client", None)
+    if mcp_client is None:
+        await update.message.reply_text("No MCP servers connected.")
+        return
+
+    status = mcp_client.get_status()
+    if not status["servers"]:
+        await update.message.reply_text("No MCP servers connected.")
+        return
+
+    lines: list[str] = []
+    for srv in status["servers"]:
+        state = "connected" if srv["connected"] else "DISCONNECTED"
+        lines.append(f"  {srv['name']} [{state}] — {srv['tools']} tools")
+        for tool_name in srv["tool_names"]:
+            lines.append(f"    - {tool_name}")
+
+    text = f"MCP servers ({len(status['servers'])}):\n\n" + "\n".join(lines)
     await update.message.reply_text(text)
 
 
@@ -635,3 +667,4 @@ def register_commands(application: "Application") -> None:
     application.add_handler(CommandHandler("approve", _approve_handler))
     application.add_handler(CommandHandler("agents", _agents_handler))
     application.add_handler(CommandHandler("logs", _logs_handler))
+    application.add_handler(CommandHandler("mcp", _mcp_handler))

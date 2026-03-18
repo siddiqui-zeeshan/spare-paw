@@ -47,8 +47,8 @@ class OpenRouterClient:
             self._session = aiohttp.ClientSession(
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
-                    "HTTP-Referer": "https://github.com/claw-phone/claw-phone",
-                    "X-Title": "claw-phone",
+                    "HTTP-Referer": "https://github.com/spare-paw/spare-paw",
+                    "X-Title": "spare-paw",
                     "Content-Type": "application/json",
                 },
             )

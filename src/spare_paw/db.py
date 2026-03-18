@@ -1,6 +1,6 @@
 """SQLite database management with aiosqlite.
 
-Provides async access to ~/.claw-phone/claw.db with WAL mode, FTS5, and schema
+Provides async access to ~/.spare-paw/spare-paw.db with WAL mode, FTS5, and schema
 versioning via PRAGMA user_version.
 """
 
@@ -13,8 +13,8 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-DB_DIR = Path.home() / ".claw-phone"
-DB_PATH = DB_DIR / "claw.db"
+DB_DIR = Path.home() / ".spare-paw"
+DB_PATH = DB_DIR / "spare-paw.db"
 
 CURRENT_SCHEMA_VERSION = 2
 
