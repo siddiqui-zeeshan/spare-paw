@@ -143,7 +143,7 @@ async def _async_main() -> None:
     # 9. Register tools (needs app_state for cron_tools)
     config_data = config.data
 
-    from claw_phone.tools import cron_tools, files, memory, shell, subagent, tavily_search, web_scrape
+    from claw_phone.tools import code, cron_tools, files, memory, shell, subagent, tavily_search, web_scrape
     from claw_phone.tools.custom_tools import load_custom_tools, register_meta_tools
 
     shell.register(tool_registry, config_data)
@@ -152,6 +152,7 @@ async def _async_main() -> None:
     web_scrape.register(tool_registry, config_data)
     cron_tools.register(tool_registry, config_data, app_state)
     memory.register(tool_registry, config_data)
+    code.register(tool_registry, config_data, app_state)
     load_custom_tools(tool_registry, executor)
     register_meta_tools(tool_registry, config_data, app_state)
     subagent.register(tool_registry, config_data, app_state)
