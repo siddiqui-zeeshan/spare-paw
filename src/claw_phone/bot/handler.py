@@ -233,6 +233,17 @@ async def _build_system_prompt(config: Any) -> str:
             except OSError:
                 logger.warning("Failed to read prompt file: %s", path)
 
+    # Load skills from ~/.claw-phone/skills/
+    skills_dir = _PROMPT_DIR / "skills"
+    if skills_dir.is_dir():
+        for skill_path in sorted(skills_dir.glob("*.md")):
+            try:
+                content = skill_path.read_text(encoding="utf-8").strip()
+                if content:
+                    sections.append(content)
+            except OSError:
+                logger.warning("Failed to read skill file: %s", skill_path)
+
     # Inject persistent memories
     try:
         from claw_phone.tools.memory import get_all_memories

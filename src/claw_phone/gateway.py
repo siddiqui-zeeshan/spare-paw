@@ -222,6 +222,37 @@ async def _async_main() -> None:
         run_in_executor=False,
     )
 
+    # Inline send_message tool — proactively send a text message to the owner
+    async def _send_message(text: str) -> str:
+        import json as _json
+        owner_id = config.get("telegram.owner_id")
+        if not owner_id or not app_state.application:
+            return _json.dumps({"error": "Telegram not available"})
+        bot = app_state.application.bot
+        # Chunk if needed
+        while text:
+            chunk = text[:4096]
+            text = text[4096:]
+            await bot.send_message(chat_id=owner_id, text=chunk)
+        return _json.dumps({"success": True})
+
+    tool_registry.register(
+        name="send_message",
+        description=(
+            "Send a text message to the user proactively via Telegram. "
+            "Use this when you need to notify the user outside of a direct reply."
+        ),
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Message text to send"},
+            },
+            "required": ["text"],
+        },
+        handler=_send_message,
+        run_in_executor=False,
+    )
+
     logger.info("Tool registry initialized with %d tools", len(tool_registry))
 
     # 10. Build Telegram application

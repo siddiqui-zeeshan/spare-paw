@@ -45,6 +45,11 @@ CRON_CREATE_SCHEMA: dict[str, Any] = {
             "items": {"type": "string"},
             "description": "List of tool names this cron may use (optional, defaults to all)",
         },
+        "once": {
+            "type": "boolean",
+            "description": "If true, the job fires once then auto-deletes. Use for reminders.",
+            "default": False,
+        },
     },
     "required": ["name", "schedule", "prompt"],
 }
@@ -102,20 +107,22 @@ async def _handle_cron_create(
     prompt: str,
     model: str | None = None,
     tools_allowed: list[str] | None = None,
+    once: bool = False,
 ) -> str:
     """Create a new cron job, persist to DB, and schedule via CronScheduler."""
     cron_id = str(uuid.uuid4())[:8]
     now = datetime.now(timezone.utc).isoformat()
     tools_json = json.dumps(tools_allowed) if tools_allowed else None
+    metadata_json = json.dumps({"once": True}) if once else None
 
     try:
         db = await get_db()
         await db.execute(
             """
-            INSERT INTO cron_jobs (id, name, schedule, prompt, model, tools_allowed, enabled, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+            INSERT INTO cron_jobs (id, name, schedule, prompt, model, tools_allowed, enabled, created_at, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
             """,
-            (cron_id, name, schedule, prompt, model, tools_json, now),
+            (cron_id, name, schedule, prompt, model, tools_json, now, metadata_json),
         )
         await db.commit()
     except Exception as exc:  # noqa: BLE001
@@ -295,6 +302,7 @@ def register(
         prompt: str,
         model: str | None = None,
         tools_allowed: list[str] | None = None,
+        once: bool = False,
     ) -> str:
         return await _handle_cron_create(
             app_state,
@@ -303,13 +311,15 @@ def register(
             prompt=prompt,
             model=model,
             tools_allowed=tools_allowed,
+            once=once,
         )
 
     registry.register(
         name="cron_create",
         description=(
             "Create a new scheduled task (cron job). "
-            "Specify a cron expression for the schedule and a prompt to run."
+            "Specify a cron expression for the schedule and a prompt to run. "
+            "Set once=true for one-shot reminders that auto-delete after firing."
         ),
         parameters_schema=CRON_CREATE_SCHEMA,
         handler=_create_handler,

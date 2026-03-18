@@ -107,6 +107,9 @@ async def execute_cron(
         await _update_cron_result(cron_id, now, result=result)
         logger.info("Cron %s executed successfully", cron_id)
 
+        # 8. Auto-delete one-shot crons
+        await _maybe_delete_once(app_state, cron_id)
+
     except Exception as exc:
         error_msg = f"{type(exc).__name__}: {exc}"
         logger.error("Cron %s failed: %s", cron_id, error_msg, exc_info=True)
@@ -173,3 +176,24 @@ async def _update_cron_result(
         await db.commit()
     except Exception:
         logger.exception("Failed to update cron_jobs for %s", cron_id)
+
+
+async def _maybe_delete_once(app_state: Any, cron_id: str) -> None:
+    """Delete a cron job if it has once=true in its metadata."""
+    try:
+        db = await get_db()
+        cursor = await db.execute(
+            "SELECT metadata FROM cron_jobs WHERE id = ?", (cron_id,)
+        )
+        row = await cursor.fetchone()
+        if row and row["metadata"]:
+            import json
+            meta = json.loads(row["metadata"])
+            if meta.get("once"):
+                await db.execute("DELETE FROM cron_jobs WHERE id = ?", (cron_id,))
+                await db.commit()
+                if app_state.scheduler:
+                    await app_state.scheduler.remove_job(cron_id)
+                logger.info("One-shot cron %s auto-deleted", cron_id)
+    except Exception:
+        logger.exception("Failed to auto-delete one-shot cron %s", cron_id)
