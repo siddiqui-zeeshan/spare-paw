@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from spare_paw.backend import IncomingMessage
-from spare_paw.core.engine import process_agent_callback, process_message, split_text
+from spare_paw.core.engine import enqueue, process_agent_callback, process_message, split_text
 
 
 class TestSplitText:
@@ -245,6 +246,69 @@ class TestProcessAgentCallback:
         backend.send_text.assert_awaited_once()
         sent_text = backend.send_text.await_args.args[0]
         assert "failed" in sent_text.lower() or "error" in sent_text.lower()
+
+
+class TestEnqueue:
+    @pytest.mark.asyncio
+    async def test_enqueue_incoming_message(self):
+        """enqueue(IncomingMessage) puts it on the queue."""
+        import spare_paw.core.engine as engine_mod
+
+        engine_mod._message_queue = asyncio.Queue()
+        msg = IncomingMessage(text="hello")
+        await enqueue(msg)
+        item = engine_mod._message_queue.get_nowait()
+        assert isinstance(item, IncomingMessage)
+        assert item.text == "hello"
+        engine_mod._message_queue = None
+
+    @pytest.mark.asyncio
+    async def test_enqueue_agent_callback(self):
+        """enqueue(('agent_callback', text)) works for callbacks."""
+        import spare_paw.core.engine as engine_mod
+
+        engine_mod._message_queue = asyncio.Queue()
+        await enqueue(("agent_callback", "results here"))
+        item = engine_mod._message_queue.get_nowait()
+        assert item == ("agent_callback", "results here")
+        engine_mod._message_queue = None
+
+    @pytest.mark.asyncio
+    async def test_enqueue_noop_when_no_queue(self):
+        """enqueue does not raise when queue is not initialized."""
+        import spare_paw.core.engine as engine_mod
+
+        engine_mod._message_queue = None
+        await enqueue(IncomingMessage(text="ignored"))  # should not raise
+
+
+class TestStartQueueProcessor:
+    @pytest.mark.asyncio
+    async def test_injects_queue_into_subagent(self):
+        """start_queue_processor sets subagent._message_queue."""
+        import spare_paw.core.engine as engine_mod
+        from spare_paw.core.engine import start_queue_processor
+
+        app_state = _make_app_state()
+        backend = _make_backend()
+
+        with patch("spare_paw.tools.subagent._message_queue", None):
+            from spare_paw.tools import subagent as subagent_mod
+
+            start_queue_processor(app_state, backend)
+
+            assert engine_mod._message_queue is not None
+            assert subagent_mod._message_queue is engine_mod._message_queue
+
+            # Cleanup
+            if engine_mod._queue_task:
+                engine_mod._queue_task.cancel()
+                try:
+                    await engine_mod._queue_task
+                except asyncio.CancelledError:
+                    pass
+            engine_mod._message_queue = None
+            engine_mod._queue_task = None
 
 
 class TestNoTelegramImport:
