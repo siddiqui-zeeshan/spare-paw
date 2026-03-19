@@ -135,9 +135,7 @@ async def test_spawn_assigns_group_id():
     app_state = _make_app_state()
 
     with patch.object(subagent_mod, "_run_agent", side_effect=_noop_run_agent):
-        result = json.loads(
-            await subagent_mod._handle_spawn(app_state, name="a1", prompt="task1")
-        )
+        await subagent_mod._handle_spawn(app_state, name="a1", prompt="task1")
 
     assert len(subagent_mod._agents) == 1
     agent_id = next(iter(subagent_mod._agents))
@@ -212,11 +210,9 @@ async def test_single_agent_group():
         subagent_mod._agents[agent_id]["status"] = "completed"
 
     with patch.object(subagent_mod, "_run_agent", side_effect=_run_and_complete):
-        with patch.object(subagent_mod, "_notify_main_agent") as mock_notify:
-            result = json.loads(
-                await subagent_mod._handle_spawn(
-                    app_state, name="solo", prompt="solo task"
-                )
+        with patch.object(subagent_mod, "_notify_main_agent"):
+            await subagent_mod._handle_spawn(
+                app_state, name="solo", prompt="solo task"
             )
             # Let the background task run
             await asyncio.sleep(0)
