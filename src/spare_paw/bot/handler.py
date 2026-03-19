@@ -221,7 +221,16 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # 8. Ingest assistant response
         await ctx_module.ingest(conversation_id, "assistant", response_text)
 
-        # 9. Send response back via Telegram (chunked if needed)
+        # 9. Run LCM compaction in background (non-blocking)
+        summary_model = app_state.config.get(
+            "context.summary_model", "google/gemini-3.1-flash-lite"
+        )
+        asyncio.create_task(
+            ctx_module.compact(conversation_id, app_state.router_client, summary_model),
+            name="lcm-compact",
+        )
+
+        # 10. Send response back via Telegram (chunked if needed)
         await _send_response(update, response_text)
 
     finally:

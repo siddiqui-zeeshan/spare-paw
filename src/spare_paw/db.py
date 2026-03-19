@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 DB_DIR = Path.home() / ".spare-paw"
 DB_PATH = DB_DIR / "spare-paw.db"
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 SCHEMA_V1 = """\
 CREATE TABLE IF NOT EXISTS messages (
@@ -103,6 +103,40 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
 END;
 """
 
+SCHEMA_V3 = """\
+CREATE TABLE IF NOT EXISTS summary_nodes (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    parent_id TEXT,
+    depth INTEGER NOT NULL DEFAULT 0,
+    content TEXT NOT NULL,
+    token_count INTEGER NOT NULL,
+    source_msg_ids TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_summary_nodes_conversation
+    ON summary_nodes(conversation_id, depth, created_at);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS summary_nodes_fts
+    USING fts5(content, content=summary_nodes, content_rowid=rowid);
+
+CREATE TRIGGER IF NOT EXISTS summary_nodes_ai AFTER INSERT ON summary_nodes BEGIN
+    INSERT INTO summary_nodes_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS summary_nodes_ad AFTER DELETE ON summary_nodes BEGIN
+    INSERT INTO summary_nodes_fts(summary_nodes_fts, rowid, content)
+        VALUES('delete', old.rowid, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS summary_nodes_au AFTER UPDATE ON summary_nodes BEGIN
+    INSERT INTO summary_nodes_fts(summary_nodes_fts, rowid, content)
+        VALUES('delete', old.rowid, old.content);
+    INSERT INTO summary_nodes_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+"""
+
 # ---- Singleton connection ----
 
 _connection: aiosqlite.Connection | None = None
@@ -147,6 +181,13 @@ async def init_db() -> None:
         await _set_user_version(conn, 2)
         await conn.commit()
         logger.info("Database schema v2 applied")
+
+    if version < 3:
+        logger.info("Migrating database to schema v3 (summary_nodes)")
+        await conn.executescript(SCHEMA_V3)
+        await _set_user_version(conn, 3)
+        await conn.commit()
+        logger.info("Database schema v3 applied")
 
 
 async def close_db() -> None:
