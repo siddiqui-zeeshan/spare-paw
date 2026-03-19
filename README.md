@@ -17,7 +17,7 @@ A 24/7 personal AI agent running on a rooted Android phone via Termux, accessibl
 - **Sliding window context** -- token-budgeted context assembly with configurable window size and safety margin
 - **Message queue with backpressure** -- incoming messages queue while the bot is busy; typing indicator signals processing
 - **Heartbeat watchdog** -- detects event loop starvation and deadlocks, not just process crashes
-- **Agent orchestration** -- spawn multiple subagents in a single turn; agents spawned in the same batch are auto-grouped and their results are delivered together as one synthesized response. Three predefined archetypes: `researcher` (web search + scraping), `coder` (shell + files), `analyst` (data analysis), each with preset tools and system prompt. Safety limits: max 3 concurrent agents, max 3 per group, 30-second rate limit between separate spawn requests
+- **Agent orchestration** -- spawn multiple subagents in a single turn; agents spawned in the same tool-call batch are deterministically grouped (via a shared batch group_id injected by the tool loop) and their results are delivered together as one synthesized response. Three predefined archetypes: `researcher` (web search + scraping), `coder` (shell + files), `analyst` (data analysis), each with preset tools and system prompt. Safety limits: max 3 concurrent agents, max 3 per group
 - **Token/cost tracking** -- per-agent token usage tracking (prompt, completion, total) from OpenRouter, visible via `list_agents`
 - **MCP client** -- connect to external MCP servers (GitHub, filesystem, etc.) and use their tools alongside native tools
 - **Owner-only auth** -- all messages from non-owner Telegram users are silently ignored
@@ -212,7 +212,7 @@ When asked to research AI model pricing and the Anthropic changelog simultaneous
 
 1. Spawned 2 background agents in a single turn (`researcher` archetype for both)
 2. Both ran in parallel -- one searched OpenRouter pricing, the other scraped `docs.anthropic.com`
-3. Agents were auto-grouped under the same group ID
+3. Both spawn_agent calls were in the same tool-call batch, so the tool loop assigned them the same group_id
 4. Results were bundled and synthesized by the main LLM into one coherent response
 5. User received a single Telegram message covering both topics, not two separate dumps
 
@@ -251,8 +251,9 @@ Tools (ProcessPoolExecutor: shell, files, web search, web scrape, cron, vision)
   |
 Agent Orchestrator (spawn_agent -> parallel multi-agent spawning)
   |                    \
-  |                     Auto-grouping: agents spawned in the same batch are grouped;
-  |                     turn stop is deferred until all spawns complete.
+  |                     Batch-based grouping: the tool loop generates a shared
+  |                     group_id for all spawn_agent calls in the same model
+  |                     response; turn stop is deferred until all spawns complete.
   |                     Group callback: results flow back via a queue callback,
   |                     synthesized into one coherent response by the main LLM.
   |                     Results stored in conversation memory for follow-ups
@@ -267,8 +268,8 @@ Key design points:
 - Heartbeat file touched every 30s; watchdog restarts if stale beyond 90s
 - Cron outputs are delivered to Telegram but do not enter conversation memory
 - Subagents don't message the user directly; results flow back through a group callback queue, letting the main LLM synthesize a unified response. Results are stored in conversation memory for follow-up questions
-- Multiple agents spawned in one tool-call batch are auto-grouped; the turn stop is deferred until all spawns in the batch complete
-- Safety limits: max 3 concurrent agents, max 3 per group, 30-second rate limit between separate spawn requests
+- Multiple agents spawned in one tool-call batch are deterministically grouped by the tool loop (shared batch group_id); the turn stop is deferred until all spawns in the batch complete
+- Safety limits: max 3 concurrent agents, max 3 per group
 - Three agent archetypes (`researcher`, `coder`, `analyst`) each set appropriate tools and system prompt
 - Each agent tracks token usage (prompt, completion, total) from OpenRouter API responses
 - Token counting uses tiktoken with a configurable safety margin for non-OpenAI models

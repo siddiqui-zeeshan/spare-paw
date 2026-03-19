@@ -17,14 +17,10 @@ import spare_paw.tools.subagent as subagent_mod
 
 @pytest.fixture(autouse=True)
 def _reset_agents():
-    """Clear the global _agents dict and rate-limiter before each test."""
+    """Clear the global _agents dict before each test."""
     subagent_mod._agents.clear()
-    subagent_mod._last_spawn_time = 0
-    subagent_mod._last_group_id = None
     yield
     subagent_mod._agents.clear()
-    subagent_mod._last_spawn_time = 0
-    subagent_mod._last_group_id = None
 
 
 def _make_app_state() -> MagicMock:
@@ -394,15 +390,13 @@ async def test_different_group_ids_not_merged():
 
 @pytest.mark.asyncio
 async def test_no_timing_based_grouping():
-    """Spawns without explicit group_id should NOT auto-group by timing."""
+    """Spawns without explicit group_id should each get their own group."""
     app_state = _make_app_state()
 
     with patch.object(subagent_mod, "_run_agent", side_effect=_noop_run_agent):
         r1 = json.loads(
             await subagent_mod._handle_spawn(app_state, name="a1", prompt="task1")
         )
-        # Reset rate limit to allow second spawn
-        subagent_mod._last_spawn_time = 0
         r2 = json.loads(
             await subagent_mod._handle_spawn(app_state, name="a2", prompt="task2")
         )

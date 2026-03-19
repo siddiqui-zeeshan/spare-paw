@@ -190,10 +190,6 @@ async def _run_agent(
                 logger.exception("Failed to notify main agent for group %s", group_id)
 
 
-_last_spawn_time: float = 0  # monotonic time of last successful spawn
-_last_group_id: str | None = None  # group_id from the most recent spawn
-
-
 async def _handle_spawn(
     app_state: Any,
     name: str,
@@ -205,19 +201,6 @@ async def _handle_spawn(
     group_id: str | None = None,
 ) -> str:
     """Spawn a background agent."""
-    global _last_spawn_time, _last_group_id
-    import time
-
-    now = time.monotonic()
-    elapsed = now - _last_spawn_time
-
-    # Rate limit: max 1 spawn per 30 seconds (skip if part of a group batch)
-    if elapsed < 30 and group_id is None:
-        return json.dumps({
-            "status": "rate_limited",
-            "message": "An agent was just spawned. Do NOT spawn another. Reply to the user now.",
-        })
-
     # Check concurrency limit
     running = sum(1 for a in _agents.values() if a["status"] == "running")
     if running >= _MAX_CONCURRENT:
@@ -256,10 +239,6 @@ async def _handle_spawn(
         "agent_type": agent_type,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-
-    # Mark spawn time and group for auto-grouping
-    _last_spawn_time = now
-    _last_group_id = resolved_group_id
 
     # Launch as background task
     asyncio.create_task(
