@@ -203,6 +203,35 @@ When asked to fix a known issue ("no dependency lockfile"), the bot autonomously
 
 All from two Telegram messages. No human intervention after the initial prompt.
 
+### More real-world examples
+
+**1. Parallel multi-agent research**
+
+When asked to research AI model pricing and the Anthropic changelog simultaneously, the bot:
+
+1. Spawned 2 background agents in a single turn (`researcher` archetype for both)
+2. Both ran in parallel -- one searched OpenRouter pricing, the other scraped `docs.anthropic.com`
+3. Agents were auto-grouped under the same group ID
+4. Results were bundled and synthesized by the main LLM into one coherent response
+5. User received a single Telegram message covering both topics, not two separate dumps
+
+**2. Self-creating tools + cron automation**
+
+When asked to monitor system health, the bot:
+
+1. Used `tool_create` to write a new `check_system_health` shell script on the fly (checking battery, RAM, storage)
+2. Sent an approval button via Telegram inline keyboard -- user tapped "Approve"
+3. Created a cron job (`0 */3 * * *`) to run the health check every 3 hours
+4. The tool and cron persist across restarts -- zero human code involved
+
+**3. LCM memory recall**
+
+After 100+ messages in a conversation, the bot had compressed history into 12 DAG summaries (11 leaves + 1 condensed). When later asked "what did we talk about earlier?":
+
+1. Used `lcm_grep` to search compressed summaries via FTS5
+2. Used `lcm_expand` to drill into matching summary nodes and recover original messages
+3. Recalled specific details from early in the conversation that would have been lost with a flat sliding window
+
 ### Why not MCP?
 
 The official GitHub MCP server works (`npx @modelcontextprotocol/server-github`), but it pulls in Node.js and adds startup latency. Since `gh` CLI covers the same surface area and is already available as a shell command, there's nothing extra to configure or run.
