@@ -88,10 +88,10 @@ async def run_tool_loop(
         messages.append(assistant_message)
 
         # Generate a shared group_id for all spawn_agent calls in this batch
-        _has_spawn = any(
+        has_spawn = any(
             tc["function"]["name"] == "spawn_agent" for tc in tool_calls
         )
-        batch_group_id = uuid.uuid4().hex[:8] if _has_spawn else None
+        batch_group_id = uuid.uuid4().hex[:8] if has_spawn else None
 
         # Execute each tool call, deferring stop signals until all are done
         stop_reply: str | None = None

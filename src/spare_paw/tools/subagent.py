@@ -333,11 +333,12 @@ def register(registry: Any, config: dict[str, Any], app_state: Any) -> None:
         tools: list[str] | None = None,
         max_iterations: int = 15,
         agent_type: str | None = None,
+        group_id: str | None = None,
     ) -> str:
         return await _handle_spawn(
             app_state, name=name, prompt=prompt,
             model=model, tools=tools, max_iterations=max_iterations,
-            agent_type=agent_type,
+            agent_type=agent_type, group_id=group_id,
         )
 
     registry.register(
@@ -345,7 +346,7 @@ def register(registry: Any, config: dict[str, Any], app_state: Any) -> None:
         description=(
             "Spawn a background agent that works independently and reports results back to you. "
             "For multi-part requests, spawn MULTIPLE agents in parallel (one per subtask, max 3) "
-            "in a SINGLE tool-call batch — they auto-group and results are delivered together. "
+            "in a SINGLE tool-call batch — batch-based grouping ensures results are delivered together. "
             "Use agent_type for specialization: 'researcher' (web search), 'coder' (shell/files), "
             "'analyst' (data analysis). Give each agent a focused, self-contained prompt. "
             "Do NOT spawn for simple questions or single tool calls — handle those directly."

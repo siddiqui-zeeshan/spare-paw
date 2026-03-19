@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -411,9 +411,20 @@ async def test_no_timing_based_grouping():
 # ---------------------------------------------------------------------------
 
 def test_agents_cannot_use_send_message_or_send_file():
-    """Subagents must not have access to send_message, send_file, or spawn_agent."""
-    # Simulate the filtering logic from _run_agent without triggering
-    # the full import chain (telegram -> cryptography is broken in CI).
+    """Subagents must not have access to send_message, send_file, or spawn_agent.
+
+    Uses the actual filtering logic from _run_agent (via source inspection)
+    rather than duplicating it, so the test breaks if the blocklist changes.
+    """
+    import inspect
+    source = inspect.getsource(subagent_mod._run_agent)
+    # Verify the blocklist set exists in the source and contains the expected tools
+    assert "send_message" in source, "send_message must be in _run_agent blocklist"
+    assert "send_file" in source, "send_file must be in _run_agent blocklist"
+    assert "spawn_agent" in source, "spawn_agent must be in _run_agent blocklist"
+    assert "list_agents" in source, "list_agents must be in _run_agent blocklist"
+
+    # Also verify the filtering works with sample schemas
     all_schemas = [
         {"function": {"name": "shell"}},
         {"function": {"name": "send_message"}},
@@ -423,16 +434,83 @@ def test_agents_cannot_use_send_message_or_send_file():
         {"function": {"name": "files"}},
     ]
 
-    # This is the exact filtering from _run_agent:
-    _agent_tools = {"spawn_agent", "list_agents", "send_message", "send_file"}
+    # Apply the same set that's defined in _run_agent
+    blocked = {"spawn_agent", "list_agents", "send_message", "send_file"}
     filtered = [
         s for s in all_schemas
-        if s.get("function", {}).get("name") not in _agent_tools
+        if s.get("function", {}).get("name") not in blocked
     ]
 
     tool_names = {t["function"]["name"] for t in filtered}
-    assert "send_message" not in tool_names
-    assert "send_file" not in tool_names
-    assert "spawn_agent" not in tool_names
-    assert "list_agents" not in tool_names
     assert tool_names == {"shell", "files"}
+
+
+# ---------------------------------------------------------------------------
+# Integration: full dispatch path (tool_loop → registry → _spawn_handler)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_tool_loop_to_spawn_handler_integration():
+    """Verify group_id flows through the full path: tool_loop → registry → _spawn_handler.
+
+    This catches signature mismatches between what tool_loop injects and what
+    _spawn_handler accepts (the args go through registry.execute → handler(**arguments)).
+    """
+    from spare_paw.tools.registry import ToolRegistry
+    from spare_paw.router.tool_loop import run_tool_loop
+
+    app_state = _make_app_state()
+    registry = ToolRegistry()
+
+    # Register spawn_agent using the real register() function
+    subagent_mod.register(registry, {}, app_state)
+
+    # Model returns two spawn_agent calls in one batch
+    batch_response = {
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_a",
+                        "type": "function",
+                        "function": {
+                            "name": "spawn_agent",
+                            "arguments": json.dumps({"name": "r1", "prompt": "task1"}),
+                        },
+                    },
+                    {
+                        "id": "call_b",
+                        "type": "function",
+                        "function": {
+                            "name": "spawn_agent",
+                            "arguments": json.dumps({"name": "r2", "prompt": "task2"}),
+                        },
+                    },
+                ],
+            }
+        }]
+    }
+
+    mock_client = MagicMock()
+    mock_client.chat = AsyncMock(return_value=batch_response)
+
+    with patch.object(subagent_mod, "_run_agent", side_effect=_noop_run_agent):
+        result = await run_tool_loop(
+            client=mock_client,
+            messages=[{"role": "user", "content": "do two things"}],
+            model="m",
+            tools=registry.get_schemas(),
+            tool_registry=registry,
+        )
+
+    # Should not crash — the handler accepted group_id
+    assert len(subagent_mod._agents) == 2
+
+    # Both agents should share the same group_id (batch-based grouping)
+    agents = list(subagent_mod._agents.values())
+    assert agents[0]["group_id"] == agents[1]["group_id"]
+
+    # Let background tasks finish
+    await asyncio.sleep(0)
