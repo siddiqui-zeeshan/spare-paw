@@ -14,6 +14,8 @@ A 24/7 personal AI agent running on a rooted Android phone via Termux, accessibl
 - **Sliding window context** -- token-budgeted context assembly with configurable window size and safety margin
 - **Message queue with backpressure** -- incoming messages queue while the bot is busy; typing indicator signals processing
 - **Heartbeat watchdog** -- detects event loop starvation and deadlocks, not just process crashes
+- **Agent orchestration** -- spawn multiple subagents in a single turn; agents spawned in the same batch are auto-grouped and their results are delivered together as one synthesized response. Three predefined archetypes: `researcher` (web search + scraping), `coder` (shell + files), `analyst` (data analysis), each with preset tools and system prompt. Safety limits: max 3 concurrent agents, max 3 per group, 30-second rate limit between separate spawn requests
+- **Token/cost tracking** -- per-agent token usage tracking (prompt, completion, total) from OpenRouter, visible via `list_agents`
 - **MCP client** -- connect to external MCP servers (GitHub, filesystem, etc.) and use their tools alongside native tools
 - **Owner-only auth** -- all messages from non-owner Telegram users are silently ignored
 
@@ -117,6 +119,8 @@ All tools are exposed to the LLM as callable functions. Blocking tools run in a 
 | `cron_create` | Create a scheduled task | Accepts name, cron expression, prompt, optional model |
 | `cron_edit` | Edit an existing scheduled task | Update name, schedule, prompt, and/or model by cron ID |
 | `cron_delete` | Delete a scheduled task | By cron ID |
+| `spawn_agent` | Spawn a subagent for parallel work | `agent_type`: `researcher`, `coder`, or `analyst`; multiple can be spawned in one turn and are auto-grouped |
+| `list_agents` | List running/completed agents | Shows status, result preview, and per-agent token usage (prompt, completion, total) |
 | `cron_list` | List all scheduled tasks | Returns schedule, status, last run info |
 
 ## MCP (Model Context Protocol)
@@ -155,6 +159,14 @@ Tools (ProcessPoolExecutor: shell, files, web search, web scrape, cron, vision)
   |                         \
   |                          MCP Client (connects to external MCP servers)
   |
+Agent Orchestrator (spawn_agent -> parallel multi-agent spawning)
+  |                    \
+  |                     Auto-grouping: agents spawned in the same batch are grouped;
+  |                     turn stop is deferred until all spawns complete.
+  |                     Group callback: results flow back via a queue callback,
+  |                     synthesized into one coherent response by the main LLM.
+  |                     Results stored in conversation memory for follow-ups
+  |
 Cron Scheduler (APScheduler, SQLite-persisted, semaphore-gated)
 ```
 
@@ -164,6 +176,11 @@ Key design points:
 - `asyncio.Semaphore(1)` serializes all model API calls to prevent races
 - Heartbeat file touched every 30s; watchdog restarts if stale beyond 90s
 - Cron outputs are delivered to Telegram but do not enter conversation memory
+- Subagents don't message the user directly; results flow back through a group callback queue, letting the main LLM synthesize a unified response. Results are stored in conversation memory for follow-up questions
+- Multiple agents spawned in one tool-call batch are auto-grouped; the turn stop is deferred until all spawns in the batch complete
+- Safety limits: max 3 concurrent agents, max 3 per group, 30-second rate limit between separate spawn requests
+- Three agent archetypes (`researcher`, `coder`, `analyst`) each set appropriate tools and system prompt
+- Each agent tracks token usage (prompt, completion, total) from OpenRouter API responses
 - Token counting uses tiktoken with a configurable safety margin for non-OpenAI models
 
 See [SPEC.md](SPEC.md) for the full specification including database schema, concurrency model, and design decisions.

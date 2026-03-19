@@ -81,6 +81,11 @@ def start_queue_processor(application: "Application") -> None:
     global _message_queue, _queue_task
     _message_queue = asyncio.Queue()
     _queue_task = asyncio.create_task(_process_queue(application))
+
+    # Share the queue with the subagent module for callbacks
+    from spare_paw.tools import subagent as subagent_mod
+    subagent_mod._message_queue = _message_queue
+
     logger.info("Message queue processor started")
 
 
@@ -100,23 +105,35 @@ async def _queue_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def _process_queue(application: "Application") -> None:
-    """Drain the message queue, processing one message at a time."""
+    """Drain the message queue, processing one message at a time.
+
+    Handles both regular Telegram messages and synthetic agent callback
+    messages (pushed by subagents when a group completes).
+    """
     global _message_queue
     assert _message_queue is not None
 
     while True:
         try:
-            update, context = await _message_queue.get()
+            item = await _message_queue.get()
             try:
-                await _handle_message(update, context)
+                # Agent callback: ("agent_callback", synthetic_text)
+                if isinstance(item, tuple) and len(item) == 2 and item[0] == "agent_callback":
+                    await _handle_agent_callback(item[1], application)
+                else:
+                    update, context = item
+                    await _handle_message(update, context)
             except Exception:
-                logger.exception("Unhandled error processing message")
-                try:
-                    await update.message.reply_text(
-                        "An internal error occurred. Please try again."
-                    )
-                except Exception:
-                    logger.exception("Failed to send error reply")
+                logger.exception("Unhandled error processing queue item")
+                # Only try to reply if it was a regular message
+                if not (isinstance(item, tuple) and item[0] == "agent_callback"):
+                    try:
+                        update, _ctx = item
+                        await update.message.reply_text(
+                            "An internal error occurred. Please try again."
+                        )
+                    except Exception:
+                        logger.exception("Failed to send error reply")
             finally:
                 _message_queue.task_done()
         except asyncio.CancelledError:
@@ -213,6 +230,93 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await typing_task
         except asyncio.CancelledError:
             pass
+
+
+async def _handle_agent_callback(synthetic_text: str, application: "Application") -> None:
+    """Process a synthetic agent callback by feeding results to the main LLM.
+
+    The main LLM synthesizes a coherent response from the agent results
+    and sends it to the user. The response is ingested into conversation
+    memory so the LLM can reference it in future turns.
+    """
+    app_state = application.bot_data.get("app_state")
+    if app_state is None:
+        logger.warning("Agent callback received but app_state not available")
+        return
+
+    owner_id = app_state.config.get("telegram.owner_id")
+    if not owner_id:
+        return
+
+    try:
+        from spare_paw import context as ctx_module
+        from spare_paw.router.tool_loop import run_tool_loop
+
+        # Get or create conversation
+        conversation_id = await ctx_module.get_or_create_conversation()
+
+        # Ingest the agent results with instructions for the main LLM
+        augmented_text = (
+            f"{synthetic_text}\n\n"
+            "[INSTRUCTIONS] The above are results from background agents you spawned. "
+            "Present the FULL findings to the user — include all details, data, links, "
+            "and comparisons the agents found. Do NOT summarize into a single sentence. "
+            "Format the response clearly for Telegram."
+        )
+        await ctx_module.ingest(conversation_id, "user", augmented_text)
+
+        # Assemble context with the agent results included
+        system_prompt = await _build_system_prompt(app_state.config)
+        messages = await ctx_module.assemble(conversation_id, system_prompt)
+
+        # Run the main LLM to synthesize a response
+        model = app_state.config.get("models.default", "google/gemini-2.0-flash")
+        tool_schemas = app_state.tool_registry.get_schemas()
+        max_iterations = app_state.config.get("agent.max_tool_iterations", 20)
+
+        response_text = await run_tool_loop(
+            client=app_state.router_client,
+            messages=messages,
+            model=model,
+            tools=tool_schemas,
+            tool_registry=app_state.tool_registry,
+            max_iterations=max_iterations,
+            executor=app_state.executor,
+        )
+
+        # Ingest the synthesized response into memory
+        await ctx_module.ingest(conversation_id, "assistant", response_text)
+
+        # Send to user via Telegram
+        bot = application.bot
+        chunks = _split_text(response_text, _MAX_MESSAGE_LENGTH)
+        for chunk in chunks:
+            try:
+                await bot.send_message(
+                    chat_id=owner_id, text=chunk,
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                )
+            except Exception:
+                try:
+                    escaped = _escape_md2(chunk)
+                    await bot.send_message(
+                        chat_id=owner_id, text=escaped,
+                        parse_mode=ParseMode.MARKDOWN_V2,
+                    )
+                except Exception:
+                    await bot.send_message(chat_id=owner_id, text=chunk)
+
+    except Exception:
+        logger.exception("Failed to handle agent callback")
+        try:
+            bot = application.bot
+            await bot.send_message(
+                chat_id=owner_id,
+                text="Agent results received but I failed to process them. "
+                     "Use /search to find the raw results.",
+            )
+        except Exception:
+            logger.exception("Failed to send agent callback error")
 
 
 async def _build_system_prompt(config: Any) -> str:

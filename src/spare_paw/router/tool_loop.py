@@ -22,7 +22,8 @@ async def run_tool_loop(
     tool_registry: "ToolRegistry",
     max_iterations: int = 20,
     executor: ProcessPoolExecutor | None = None,
-) -> str:
+    track_usage: bool = False,
+) -> str | tuple[str, dict[str, int]]:
     """Run the model in a tool-calling loop until it produces a final text response.
 
     Each iteration:
@@ -42,12 +43,34 @@ async def run_tool_loop(
         tool_registry: Registry that resolves and executes tool functions.
         max_iterations: Safety cap on tool-call rounds (default 20).
         executor: Optional ProcessPoolExecutor for blocking tool functions.
+        track_usage: If True, accumulate token usage across all API calls and
+            return ``(response_text, usage_dict)`` instead of just the text.
 
     Returns:
-        The final text content from the model.
+        The final text content from the model when ``track_usage`` is False.
+        A tuple of ``(text, usage_dict)`` when ``track_usage`` is True, where
+        *usage_dict* has keys ``prompt_tokens``, ``completion_tokens``, and
+        ``total_tokens``.
     """
+    total_usage: dict[str, int] = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+
+    def _accumulate_usage(resp: dict[str, Any]) -> None:
+        usage = resp.get("usage", {})
+        for key in total_usage:
+            total_usage[key] += usage.get(key, 0)
+
+    def _maybe_with_usage(text: str) -> str | tuple[str, dict[str, int]]:
+        if track_usage:
+            return (text, total_usage)
+        return text
+
     for iteration in range(1, max_iterations + 1):
         response = await client.chat(messages, model, tools)
+        _accumulate_usage(response)
 
         choice = response["choices"][0]
         assistant_message = choice["message"]
@@ -58,12 +81,13 @@ async def run_tool_loop(
         if not tool_calls:
             # No tool calls — return the text content
             content = assistant_message.get("content", "")
-            return content or ""
+            return _maybe_with_usage(content or "")
 
         # Append the assistant message (with tool_calls) to the conversation
         messages.append(assistant_message)
 
-        # Execute each tool call
+        # Execute each tool call, deferring stop signals until all are done
+        stop_reply: str | None = None
         for tool_call in tool_calls:
             call_id = tool_call["id"]
             function = tool_call["function"]
@@ -108,14 +132,20 @@ async def run_tool_loop(
                 }
             )
 
-            # Check for stop signal (e.g. spawn_agent wants to end the turn)
+            # Check for stop signal but defer until all tool calls are done
             try:
                 parsed = json.loads(result_str)
                 if isinstance(parsed, dict) and parsed.get("__stop_turn__"):
-                    logger.info("Tool %s requested turn stop", name)
-                    return parsed.get("reply", result_str)
+                    logger.info("Tool %s requested turn stop (deferred)", name)
+                    if stop_reply is None:
+                        stop_reply = parsed.get("reply", result_str)
             except (json.JSONDecodeError, TypeError):
                 pass
+
+        # After all tool calls in this batch, honour the deferred stop
+        if stop_reply is not None:
+            logger.info("Executing deferred turn stop")
+            return _maybe_with_usage(stop_reply)
 
     # Exhausted max_iterations — make one final call without tools to get a
     # text summary from the model, or return a fallback error.
@@ -125,14 +155,15 @@ async def run_tool_loop(
     )
     try:
         response = await client.chat(messages, model)
+        _accumulate_usage(response)
         choice = response["choices"][0]
         content = choice["message"].get("content", "")
         if content:
-            return content
+            return _maybe_with_usage(content)
     except Exception as exc:
         logger.error("Final call after max iterations failed: %s", exc)
 
-    return (
+    return _maybe_with_usage(
         f"Reached the maximum of {max_iterations} tool iterations "
         "without a final response."
     )
