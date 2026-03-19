@@ -143,7 +143,7 @@ async def _async_main() -> None:
     # 9. Register tools (needs app_state for cron_tools)
     config_data = config.data
 
-    from spare_paw.tools import code, cron_tools, files, memory, shell, subagent, tavily_search, web_scrape
+    from spare_paw.tools import code, cron_tools, files, lcm_tools, memory, shell, subagent, tavily_search, web_scrape
     from spare_paw.tools.custom_tools import load_custom_tools, register_meta_tools
 
     shell.register(tool_registry, config_data)
@@ -156,6 +156,7 @@ async def _async_main() -> None:
     load_custom_tools(tool_registry, executor)
     register_meta_tools(tool_registry, config_data, app_state)
     subagent.register(tool_registry, config_data, app_state)
+    lcm_tools.register(tool_registry, config_data)
 
     # Inline read_logs tool
     async def _read_logs(count: int = 50) -> str:

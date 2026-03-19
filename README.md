@@ -1,6 +1,6 @@
 # spare-paw
 
-A 24/7 personal AI agent running on a rooted Android phone via Termux, accessible through Telegram. Features multi-model routing via OpenRouter, shell and filesystem tools, scheduled tasks, voice transcription, and full-text search over conversation history. Cold starts in ~1 second.
+A 24/7 personal AI agent running on a rooted Android phone via Termux, accessible through Telegram. Features multi-model routing via OpenRouter, DAG-based lossless context management, shell and filesystem tools, scheduled tasks, voice transcription, and full-text search over conversation history. Cold starts in ~1 second.
 
 ## Features
 
@@ -11,6 +11,8 @@ A 24/7 personal AI agent running on a rooted Android phone via Termux, accessibl
 - **Voice messages** -- Groq Whisper transcription for Telegram voice notes
 - **Prompt files** -- loads `IDENTITY.md`, `USER.md`, and `SYSTEM.md` from `~/.spare-paw/` on every turn for personality, user preferences, and device context. Editable live without restart
 - **Full-text search** -- FTS5-backed search across all conversation history
+- **DAG-based lossless context management (LCM)** -- when conversation history grows beyond the fresh tail (32 messages), older messages are automatically summarized into leaf nodes (~8 messages each); when 4+ leaves accumulate they condense into higher-level summaries. Every original message is preserved and searchable. Summaries are assembled between the system prompt and fresh messages so the LLM retains awareness of older context. Compaction uses a cheap configurable model (default `google/gemini-3.1-flash-lite`) to keep costs low
+- **LCM tools** -- `lcm_grep` (search raw messages and compressed summaries via FTS5), `lcm_expand` (drill into a summary to recover original messages, token-capped), `lcm_describe` (get summaries for a time range)
 - **Sliding window context** -- token-budgeted context assembly with configurable window size and safety margin
 - **Message queue with backpressure** -- incoming messages queue while the bot is busy; typing indicator signals processing
 - **Heartbeat watchdog** -- detects event loop starvation and deadlocks, not just process crashes
@@ -73,7 +75,7 @@ A template is provided at `config.example.yaml`. Key sections:
 | `models` | Model slots: `default`, `smart`, `cron_default` |
 | `groq` | Groq API key for voice transcription |
 | `tavily` | Tavily API key for web search |
-| `context` | `max_messages`, `token_budget`, `safety_margin` |
+| `context` | `max_messages`, `token_budget`, `safety_margin`, `fresh_tail_count`, `leaf_chunk_size`, `condensed_min_fanout`, `summary_model` |
 | `tools` | Per-tool enable/disable, timeouts, allowed paths |
 | `mcp` | MCP client server connections |
 | `agent` | `max_tool_iterations`, `system_prompt` template |
@@ -86,6 +88,16 @@ models:
   default: "google/gemini-2.0-flash"
   smart: "anthropic/claude-sonnet-4"
   cron_default: "google/gemini-2.0-flash"
+```
+
+LCM (context compaction) settings:
+
+```yaml
+context:
+  fresh_tail_count: 32
+  leaf_chunk_size: 8
+  condensed_min_fanout: 4
+  summary_model: "google/gemini-3.1-flash-lite"
 ```
 
 ## Telegram Commands
@@ -122,6 +134,9 @@ All tools are exposed to the LLM as callable functions. Blocking tools run in a 
 | `spawn_agent` | Spawn a subagent for parallel work | `agent_type`: `researcher`, `coder`, or `analyst`; multiple can be spawned in one turn and are auto-grouped |
 | `list_agents` | List running/completed agents | Shows status, result preview, and per-agent token usage (prompt, completion, total) |
 | `cron_list` | List all scheduled tasks | Returns schedule, status, last run info |
+| `lcm_grep` | Search raw messages and compressed summaries | FTS5 full-text search across history and DAG summaries |
+| `lcm_expand` | Drill into a summary node | Recovers original messages under a summary, token-capped |
+| `lcm_describe` | Get summaries for a time range | Returns DAG summary nodes covering the specified period |
 
 ## MCP (Model Context Protocol)
 
@@ -149,7 +164,7 @@ MCP support requires `mcp>=1.26.0`, included in the package dependencies.
 Telegram Bot (python-telegram-bot)
   |
   v
-Context Manager (SQLite + FTS5 + sliding window)
+Context Manager (SQLite + FTS5 + DAG-based lossless context management with sliding window)
   |
   v
 Model Router (OpenRouter API, semaphore-serialized, retry with backoff)
@@ -182,6 +197,7 @@ Key design points:
 - Three agent archetypes (`researcher`, `coder`, `analyst`) each set appropriate tools and system prompt
 - Each agent tracks token usage (prompt, completion, total) from OpenRouter API responses
 - Token counting uses tiktoken with a configurable safety margin for non-OpenAI models
+- DAG compaction runs automatically after each turn: messages beyond the fresh tail are chunked into leaf summaries, and when enough leaves accumulate they condense into higher-level nodes. Schema v3 adds a `summary_nodes` table with FTS5 index. `assemble()` injects compressed history between the system prompt and fresh messages
 
 See [SPEC.md](SPEC.md) for the full specification including database schema, concurrency model, and design decisions.
 
@@ -223,6 +239,7 @@ src/spare_paw/
     tavily_search.py # Tavily Search API
     web_scrape.py    # URL fetch + parsing
     cron_tools.py    # Cron CRUD tools (create, edit, delete, list)
+    lcm_tools.py     # LCM tools (lcm_grep, lcm_expand, lcm_describe)
   cron/
     scheduler.py     # APScheduler setup
     executor.py      # Cron job execution

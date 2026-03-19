@@ -141,6 +141,26 @@ async def assemble(
 
     # Prepend system prompt
     messages = [{"role": "system", "content": system_prompt}]
+
+    # Inject summary nodes (compressed history) between system prompt and fresh messages
+    try:
+        async with db.execute(
+            """SELECT content FROM summary_nodes
+               WHERE conversation_id = ? AND parent_id IS NULL
+               ORDER BY created_at ASC""",
+            (conversation_id,),
+        ) as cursor:
+            summary_rows = await cursor.fetchall()
+
+        for srow in summary_rows:
+            messages.append({
+                "role": "system",
+                "content": f"[Compressed History]\n{srow['content']}",
+            })
+    except Exception:
+        # summary_nodes table may not exist in older schemas
+        pass
+
     messages.extend(selected)
 
     logger.debug(
@@ -208,3 +228,197 @@ async def new_conversation() -> str:
     await db.commit()
     logger.info("Created new conversation %s", conversation_id)
     return conversation_id
+
+
+# ---------------------------------------------------------------------------
+# LCM compaction engine
+# ---------------------------------------------------------------------------
+
+
+async def compact(
+    conversation_id: str,
+    router_client: Any,
+    model: str,
+) -> None:
+    """Run LCM compaction on a conversation.
+
+    1. Count total messages.
+    2. If total <= fresh_tail_count, return early.
+    3. Find messages not in the fresh tail and not already covered by summaries.
+    4. Chunk them and create leaf summaries.
+    5. If enough uncondensed leaves exist, condense them.
+    """
+    db = await get_db()
+    fresh_tail_count = config.get("context.fresh_tail_count", 32)
+    leaf_chunk_size = config.get("context.leaf_chunk_size", 8)
+
+    # 1. Count total messages
+    async with db.execute(
+        "SELECT COUNT(*) FROM messages WHERE conversation_id = ?",
+        (conversation_id,),
+    ) as cur:
+        total = (await cur.fetchone())[0]
+
+    # 2. If not enough messages, nothing to compact
+    if total <= fresh_tail_count:
+        return
+
+    # 3. Find messages NOT in the fresh tail
+    async with db.execute(
+        """SELECT id, role, content FROM messages
+           WHERE conversation_id = ?
+           ORDER BY created_at ASC""",
+        (conversation_id,),
+    ) as cur:
+        all_msgs = await cur.fetchall()
+
+    # Messages outside the fresh tail (oldest ones)
+    stale_msgs = all_msgs[: len(all_msgs) - fresh_tail_count]
+
+    # Find message IDs already covered by existing summary nodes
+    async with db.execute(
+        "SELECT source_msg_ids FROM summary_nodes WHERE conversation_id = ? AND depth = 0",
+        (conversation_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+
+    covered_ids: set[str] = set()
+    for row in rows:
+        covered_ids.update(json.loads(row["source_msg_ids"]))
+
+    # Filter to uncovered messages only
+    uncovered = [
+        {"id": m["id"], "role": m["role"], "content": m["content"]}
+        for m in stale_msgs
+        if m["id"] not in covered_ids
+    ]
+
+    if not uncovered:
+        # Still check if condensation is needed
+        await _condense_summaries(conversation_id, router_client, model)
+        return
+
+    # 4. Chunk and create leaf summaries
+    for i in range(0, len(uncovered), leaf_chunk_size):
+        chunk = uncovered[i : i + leaf_chunk_size]
+        await _create_leaf_summary(conversation_id, chunk, router_client, model)
+
+    # 5. Condense if enough uncondensed leaves
+    await _condense_summaries(conversation_id, router_client, model)
+
+
+async def _create_leaf_summary(
+    conversation_id: str,
+    messages: list[dict],
+    router_client: Any,
+    model: str,
+) -> str:
+    """Summarize a chunk of messages into a leaf summary node (depth=0).
+
+    Returns the new node_id.
+    """
+    # Build the summarization prompt
+    formatted = "\n".join(
+        f"{m['role']}: {m['content']}" for m in messages
+    )
+    prompt = (
+        "Summarize the following conversation messages concisely, "
+        "preserving key facts, decisions, and context:\n\n" + formatted
+    )
+
+    # Call the LLM
+    response = await router_client.chat(
+        messages=[{"role": "user", "content": prompt}],
+        model=model,
+    )
+    summary_text = response["choices"][0]["message"]["content"]
+
+    # Store in DB
+    db = await get_db()
+    node_id = uuid.uuid4().hex
+    token_count = count_tokens(summary_text)
+    now = datetime.now(timezone.utc).isoformat()
+    source_ids = json.dumps([m["id"] for m in messages])
+
+    await db.execute(
+        """INSERT INTO summary_nodes
+           (id, conversation_id, parent_id, depth, content, token_count, source_msg_ids, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (node_id, conversation_id, None, 0, summary_text, token_count, source_ids, now),
+    )
+    await db.commit()
+
+    logger.debug(
+        "Created leaf summary %s (%d tokens) for conversation %s",
+        node_id, token_count, conversation_id,
+    )
+    return node_id
+
+
+async def _condense_summaries(
+    conversation_id: str,
+    router_client: Any,
+    model: str,
+) -> None:
+    """Condense uncondensed leaf nodes into a higher-level summary (depth=1).
+
+    Only runs when there are >= condensed_min_fanout orphan leaf nodes.
+    """
+    db = await get_db()
+    condensed_min_fanout = config.get("context.condensed_min_fanout", 4)
+
+    # Fetch orphan leaf nodes (depth=0, no parent)
+    async with db.execute(
+        """SELECT id, content FROM summary_nodes
+           WHERE conversation_id = ? AND depth = 0 AND parent_id IS NULL
+           ORDER BY created_at ASC""",
+        (conversation_id,),
+    ) as cur:
+        leaves = await cur.fetchall()
+
+    if len(leaves) < condensed_min_fanout:
+        return
+
+    # Build condensation prompt
+    formatted = "\n\n".join(
+        f"Summary {i + 1}: {leaf['content']}" for i, leaf in enumerate(leaves)
+    )
+    prompt = (
+        "Condense the following conversation summaries into a single, "
+        "higher-level summary preserving all key facts and context:\n\n" + formatted
+    )
+
+    # Call the LLM
+    response = await router_client.chat(
+        messages=[{"role": "user", "content": prompt}],
+        model=model,
+    )
+    condensed_text = response["choices"][0]["message"]["content"]
+
+    # Store condensed node
+    node_id = uuid.uuid4().hex
+    token_count = count_tokens(condensed_text)
+    now = datetime.now(timezone.utc).isoformat()
+    leaf_ids = [leaf["id"] for leaf in leaves]
+    source_ids = json.dumps(leaf_ids)
+
+    await db.execute(
+        """INSERT INTO summary_nodes
+           (id, conversation_id, parent_id, depth, content, token_count, source_msg_ids, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (node_id, conversation_id, None, 1, condensed_text, token_count, source_ids, now),
+    )
+
+    # Update leaf nodes to point to the new parent
+    for leaf_id in leaf_ids:
+        await db.execute(
+            "UPDATE summary_nodes SET parent_id = ? WHERE id = ?",
+            (node_id, leaf_id),
+        )
+
+    await db.commit()
+
+    logger.debug(
+        "Condensed %d leaves into node %s (depth=1) for conversation %s",
+        len(leaves), node_id, conversation_id,
+    )
