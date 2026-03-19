@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import re
@@ -20,14 +19,9 @@ from telegram import Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
-from pathlib import Path
-
 from spare_paw.bot.commands import register_commands
+from spare_paw.core.prompt import build_system_prompt as _build_system_prompt  # noqa: F401
 from spare_paw.core.voice import VoiceTranscriptionError, transcribe
-
-# Prompt files loaded from ~/.spare-paw/ in this order
-_PROMPT_DIR = Path.home() / ".spare-paw"
-_PROMPT_FILES = ["IDENTITY.md", "USER.md", "SYSTEM.md"]
 
 if TYPE_CHECKING:
     from telegram.ext import Application
@@ -320,52 +314,6 @@ async def _handle_agent_callback(synthetic_text: str, application: "Application"
             )
         except Exception:
             logger.exception("Failed to send agent callback error")
-
-
-async def _build_system_prompt(config: Any) -> str:
-    """Build the system prompt from config + markdown files + memories.
-
-    Loads IDENTITY.md, USER.md, and SYSTEM.md (if they exist) and appends
-    them to the base system prompt from config. Also injects all persistent
-    memories. Files are re-read on every call so edits take effect without restart.
-    """
-    base = config.get("agent.system_prompt", "")
-    current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    base = base.replace("{current_time}", current_time)
-
-    sections = [base]
-    for filename in _PROMPT_FILES:
-        path = _PROMPT_DIR / filename
-        if path.is_file():
-            try:
-                content = path.read_text(encoding="utf-8").strip()
-                if content:
-                    sections.append(content)
-            except OSError:
-                logger.warning("Failed to read prompt file: %s", path)
-
-    # Load skills from ~/.spare-paw/skills/
-    skills_dir = _PROMPT_DIR / "skills"
-    if skills_dir.is_dir():
-        for skill_path in sorted(skills_dir.glob("*.md")):
-            try:
-                content = skill_path.read_text(encoding="utf-8").strip()
-                if content:
-                    sections.append(content)
-            except OSError:
-                logger.warning("Failed to read skill file: %s", skill_path)
-
-    # Inject persistent memories
-    try:
-        from spare_paw.tools.memory import get_all_memories
-        memories = await get_all_memories()
-        if memories:
-            mem_lines = [f"- {m['key']}: {m['value']}" for m in memories]
-            sections.append("# Memories\n" + "\n".join(mem_lines))
-    except Exception:
-        logger.debug("Failed to load memories for system prompt", exc_info=True)
-
-    return "\n\n".join(sections)
 
 
 async def _extract_content(
