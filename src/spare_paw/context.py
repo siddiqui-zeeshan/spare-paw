@@ -14,6 +14,7 @@ Interface:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -29,6 +30,10 @@ logger = logging.getLogger(__name__)
 
 # Cache the tiktoken encoder at module level
 _encoder: tiktoken.Encoding | None = None
+
+# Consecutive compaction failure counter (resets on success)
+_compact_consecutive_failures: int = 0
+_COMPACT_FAILURE_WARN_THRESHOLD: int = 3
 
 
 def _get_encoder() -> tiktoken.Encoding:
@@ -305,6 +310,51 @@ async def compact(
 
     # 5. Condense if enough uncondensed leaves
     await _condense_summaries(conversation_id, router_client, model)
+
+
+async def compact_with_retry(
+    conversation_id: str,
+    router_client: Any,
+    model: str,
+) -> None:
+    """Run LCM compaction with error handling and one retry on failure.
+
+    - On first failure: logs WARNING, waits 2 seconds, retries once.
+    - On retry failure: logs ERROR, skips compaction for this cycle.
+    - Tracks consecutive failures; logs a distinct WARNING at >= 3.
+    - Resets the failure counter on success.
+    - Source messages are never deleted on failure.
+    """
+    global _compact_consecutive_failures
+
+    try:
+        await compact(conversation_id, router_client, model)
+        _compact_consecutive_failures = 0
+        return
+    except Exception as exc:
+        logger.warning(
+            "LCM compaction failed (attempt 1/2) for conversation %s: %s",
+            conversation_id, exc,
+        )
+
+    await asyncio.sleep(2)
+
+    try:
+        await compact(conversation_id, router_client, model)
+        _compact_consecutive_failures = 0
+        return
+    except Exception as exc:
+        _compact_consecutive_failures += 1
+        logger.error(
+            "LCM compaction failed (attempt 2/2) for conversation %s: %s — "
+            "skipping this cycle (consecutive failures: %d)",
+            conversation_id, exc, _compact_consecutive_failures,
+        )
+        if _compact_consecutive_failures >= _COMPACT_FAILURE_WARN_THRESHOLD:
+            logger.warning(
+                "LCM compaction has failed %d+ times consecutively",
+                _COMPACT_FAILURE_WARN_THRESHOLD,
+            )
 
 
 async def _create_leaf_summary(

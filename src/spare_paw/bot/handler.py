@@ -226,7 +226,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "context.summary_model", "google/gemini-3.1-flash-lite-preview"
         )
         asyncio.create_task(
-            ctx_module.compact(conversation_id, app_state.router_client, summary_model),
+            ctx_module.compact_with_retry(conversation_id, app_state.router_client, summary_model),
             name="lcm-compact",
         )
 
