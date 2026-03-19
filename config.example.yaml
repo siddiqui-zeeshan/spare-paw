@@ -23,7 +23,7 @@ context:
   fresh_tail_count: 32    # messages kept verbatim (not compacted)
   leaf_chunk_size: 8      # messages per leaf summary
   condensed_min_fanout: 4 # leaves needed before condensation
-  summary_model: "google/gemini-3.1-flash-lite"  # cheap model for compaction summaries
+  summary_model: "google/gemini-3.1-flash-lite-preview"  # cheap model for compaction summaries
 
 tools:
   shell:

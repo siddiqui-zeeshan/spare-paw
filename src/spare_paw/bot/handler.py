@@ -223,7 +223,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         # 9. Run LCM compaction in background (non-blocking)
         summary_model = app_state.config.get(
-            "context.summary_model", "google/gemini-3.1-flash-lite"
+            "context.summary_model", "google/gemini-3.1-flash-lite-preview"
         )
         asyncio.create_task(
             ctx_module.compact(conversation_id, app_state.router_client, summary_model),
