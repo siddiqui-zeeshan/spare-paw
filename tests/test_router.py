@@ -468,3 +468,131 @@ class TestRunToolLoop:
         spawn_calls = [c for c in captured_args if c["name"] == "spawn_agent"]
         assert len(spawn_calls) == 2
         assert spawn_calls[0]["args"]["group_id"] != spawn_calls[1]["args"]["group_id"]
+
+    @pytest.mark.asyncio
+    async def test_tool_rate_limit_returns_error_instead_of_execution(self):
+        """A tool exceeding its per-turn limit gets an error result, not execution."""
+        # Model calls "web_search" twice in separate iterations; limit is 1
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(
+            side_effect=[
+                _tool_call_response("web_search", {"query": "first"}, call_id="c1"),
+                _tool_call_response("web_search", {"query": "second"}, call_id="c2"),
+                _text_response("done"),
+            ]
+        )
+
+        mock_registry = AsyncMock()
+        mock_registry.execute = AsyncMock(return_value="search result")
+
+        messages: list[dict] = [{"role": "user", "content": "search twice"}]
+        tools = [{"type": "function", "function": {"name": "web_search"}}]
+
+        result = await run_tool_loop(
+            client=mock_client,
+            messages=messages,
+            model="m",
+            tools=tools,
+            tool_registry=mock_registry,
+            tool_limits={"web_search": 1},
+        )
+
+        assert result == "done"
+        # Only the first call should have been executed
+        assert mock_registry.execute.call_count == 1
+        # The second tool result message should contain the rate limit error
+        tool_results = [m for m in messages if m.get("role") == "tool"]
+        assert len(tool_results) == 2
+        assert "Rate limit" in tool_results[1]["content"]
+        assert "web_search" in tool_results[1]["content"]
+        assert "2/1" in tool_results[1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_call_counts_reset_between_run_tool_loop_calls(self):
+        """Each invocation of run_tool_loop has independent call counts."""
+        mock_registry = AsyncMock()
+        mock_registry.execute = AsyncMock(return_value="ok")
+
+        async def _run_once() -> str:
+            client = AsyncMock()
+            client.chat = AsyncMock(
+                side_effect=[
+                    _tool_call_response("shell", {"command": "ls"}, call_id="cx"),
+                    _text_response("done"),
+                ]
+            )
+            return await run_tool_loop(
+                client=client,
+                messages=[{"role": "user", "content": "run"}],
+                model="m",
+                tools=[{"type": "function", "function": {"name": "shell"}}],
+                tool_registry=mock_registry,
+                tool_limits={"shell": 1},
+            )
+
+        # Run twice — if counts leaked, second invocation would hit the limit
+        result1 = await _run_once()
+        result2 = await _run_once()
+
+        assert result1 == "done"
+        assert result2 == "done"
+        # Both calls executed successfully (no rate-limit skip)
+        assert mock_registry.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_tools_without_limits_are_unlimited(self):
+        """A tool not present in the limits dict is never rate-limited."""
+        call_count = 3
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(
+            side_effect=[
+                _tool_call_response("custom_tool", {}, call_id=f"c{i}")
+                for i in range(call_count)
+            ]
+            + [_text_response("done")]
+        )
+
+        mock_registry = AsyncMock()
+        mock_registry.execute = AsyncMock(return_value="result")
+
+        # custom_tool is absent from DEFAULT_TOOL_LIMITS, so it has no limit
+        result = await run_tool_loop(
+            client=mock_client,
+            messages=[{"role": "user", "content": "go"}],
+            model="m",
+            tools=[{"type": "function", "function": {"name": "custom_tool"}}],
+            tool_registry=mock_registry,
+        )
+
+        assert result == "done"
+        assert mock_registry.execute.call_count == call_count
+
+    @pytest.mark.asyncio
+    async def test_none_limit_removes_default(self):
+        """Setting a tool limit to None removes the default, making it unlimited."""
+        # shell has a default limit of 10; override with None to remove it
+        call_count = 12
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(
+            side_effect=[
+                _tool_call_response("shell", {"command": "ls"}, call_id=f"c{i}")
+                for i in range(call_count)
+            ]
+            + [_text_response("done")]
+        )
+
+        mock_registry = AsyncMock()
+        mock_registry.execute = AsyncMock(return_value="ok")
+
+        result = await run_tool_loop(
+            client=mock_client,
+            messages=[{"role": "user", "content": "go"}],
+            model="m",
+            tools=[{"type": "function", "function": {"name": "shell"}}],
+            tool_registry=mock_registry,
+            tool_limits={"shell": None},
+        )
+
+        assert result == "done"
+        # All 12 calls executed — default limit of 10 was removed
+        assert mock_registry.execute.call_count == call_count

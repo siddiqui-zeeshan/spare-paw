@@ -14,6 +14,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Per-turn (not per-session) call limits. Tools not listed are unlimited.
+DEFAULT_TOOL_LIMITS: dict[str, int] = {
+    "web_scrape": 5,
+    "web_search": 5,
+    "tavily_search": 5,
+    "shell": 10,
+    "spawn_agent": 3,
+}
+
 
 async def run_tool_loop(
     client: "OpenRouterClient",
@@ -24,6 +33,7 @@ async def run_tool_loop(
     max_iterations: int = 20,
     executor: ProcessPoolExecutor | None = None,
     track_usage: bool = False,
+    tool_limits: dict[str, int | None] | None = None,
 ) -> str | tuple[str, dict[str, int]]:
     """Run the model in a tool-calling loop until it produces a final text response.
 
@@ -46,6 +56,9 @@ async def run_tool_loop(
         executor: Optional ProcessPoolExecutor for blocking tool functions.
         track_usage: If True, accumulate token usage across all API calls and
             return ``(response_text, usage_dict)`` instead of just the text.
+        tool_limits: Per-tool call limits for this turn. Merged on top of
+            ``DEFAULT_TOOL_LIMITS``; set a value to override a default, or
+            ``None`` to remove a default limit (making the tool unlimited).
 
     Returns:
         The final text content from the model when ``track_usage`` is False.
@@ -53,6 +66,12 @@ async def run_tool_loop(
         *usage_dict* has keys ``prompt_tokens``, ``completion_tokens``, and
         ``total_tokens``.
     """
+    merged = {**DEFAULT_TOOL_LIMITS, **(tool_limits or {})}
+    effective_limits: dict[str, int] = {
+        k: v for k, v in merged.items() if v is not None
+    }
+    call_counts: dict[str, int] = {}
+
     total_usage: dict[str, int] = {
         "prompt_tokens": 0,
         "completion_tokens": 0,
@@ -116,6 +135,30 @@ async def run_tool_loop(
             # Inject batch group_id into spawn_agent calls
             if name == "spawn_agent" and batch_group_id is not None:
                 args["group_id"] = batch_group_id
+
+            # Enforce per-turn rate limits
+            call_counts[name] = call_counts.get(name, 0) + 1
+            limit = effective_limits.get(name)
+            if limit is not None and call_counts[name] > limit:
+                result_str = (
+                    f"Rate limit: {name} called {call_counts[name]}/{limit} "
+                    "times this turn. Try a different approach."
+                )
+                logger.warning(
+                    "Iteration %d: tool %s exceeded rate limit (%d/%d)",
+                    iteration,
+                    name,
+                    call_counts[name],
+                    limit,
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": result_str,
+                    }
+                )
+                continue
 
             # Execute the tool, catching any exception
             try:
