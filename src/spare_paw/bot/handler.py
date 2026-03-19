@@ -23,7 +23,7 @@ from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, fil
 from pathlib import Path
 
 from spare_paw.bot.commands import register_commands
-from spare_paw.bot.voice import VoiceTranscriptionError, transcribe
+from spare_paw.core.voice import VoiceTranscriptionError, transcribe
 
 # Prompt files loaded from ~/.spare-paw/ in this order
 _PROMPT_DIR = Path.home() / ".spare-paw"
