@@ -32,15 +32,21 @@ Eventually, adding new frontends (Discord, Slack, WhatsApp) should only require 
                     │  message loop, tool loop,     │
                     │  context assembly, callbacks   │
                     │  (100% platform-agnostic)     │
-                    └──────────┬───────────────────┘
-                               │ uses MessageBackend
-              ┌────────────────┼────────────────────┐
-              │                │                     │
-    ┌─────────▼──────┐  ┌─────▼──────────┐  ┌──────▼──────────┐
-    │ TelegramBackend │  │ WebhookBackend │  │ future backends │
-    │  (bot/ package) │  │ (webhook/ pkg) │  │                 │
-    └────────────────┘  └────────────────┘  └─────────────────┘
+                    └──┬───────────────────────┬───┘
+                       │ uses MessageBackend   │ uses core/prompt.py
+              ┌────────┼──────────────┐    ┌───▼──────────────┐
+              │        │              │    │  core/prompt.py   │
+    ┌─────────▼──────┐ │ ┌────────────▼┐  │  (leaf module,    │
+    │ TelegramBackend│ │ │future b'ends│  │   no tool/engine  │
+    │  (bot/ package)│ │ │             │  │   imports)        │
+    └────────────────┘ │ └─────────────┘  └───────────────────┘
+              ┌────────▼──────────┐
+              │  WebhookBackend   │
+              │  (webhook/ pkg)   │
+              └───────────────────┘
 ```
+
+**`core/prompt.py` is a leaf module** — it imports only from `config.py` and `tools/memory.py` (for memory injection). It does NOT import from `core/engine.py`, `tools/subagent.py`, or `router/`. This eliminates circular import risk: both `subagent.py` and `cron/executor.py` can import `_build_system_prompt` from `core/prompt.py` without creating cycles.
 
 ---
 
@@ -122,14 +128,28 @@ The `send_notification()` method handles the tool approval use case — `custom_
 
 ---
 
-## Step 2: Create `core/engine.py` — the platform-agnostic message processor
+## Step 2: Create `core/prompt.py` and `core/engine.py` — platform-agnostic core
 
-**New file:** `src/spare_paw/core/__init__.py` (empty)
-**New file:** `src/spare_paw/core/engine.py`
+**New files:**
+- `src/spare_paw/core/__init__.py` (empty)
+- `src/spare_paw/core/prompt.py` — **leaf module**, no imports from engine/tools/router
+- `src/spare_paw/core/engine.py`
+
+### `core/prompt.py` — system prompt builder (leaf module)
+
+`_build_system_prompt()` moves here — NOT into `engine.py`. This is critical for avoiding circular imports:
+- `tools/subagent.py` imports `_build_system_prompt` (currently from `bot/handler.py`)
+- `cron/executor.py` imports `_build_system_prompt` (currently from `bot/handler.py`)
+- If `_build_system_prompt` lived in `engine.py`, and `engine.py` imported from `tools/`, we'd have `engine → tools → engine` cycle risk
+
+By putting it in `core/prompt.py` (which only imports from `config` and `tools/memory`), both `subagent.py` and `cron/executor.py` can import it safely. `engine.py` also imports from `core/prompt.py` — no cycle.
+
+**Note:** `cron/executor.py` and `tools/subagent.py` must update their import to `core.prompt._build_system_prompt`.
+
+### `core/engine.py` — message processor
 
 Extract from `handler.py` everything that doesn't touch Telegram:
 
-- `_build_system_prompt()` → moves here (already platform-agnostic). **Note:** `cron/executor.py` also imports this — update its import to `core.engine._build_system_prompt`.
 - `_split_text()` → moves here (generic utility, used by backends too — they can import it from core)
 - The core of `_handle_message()` becomes `process_message(app_state, msg: IncomingMessage, backend: MessageBackend)`:
   1. Voice transcription (if `msg.voice_bytes`) — call `core/voice.py` with raw bytes
@@ -150,6 +170,8 @@ Extract from `handler.py` everything that doesn't touch Telegram:
 - `_extract_content()` → the voice/photo download logic stays in `bot/handler.py` as `_download_voice()` and `_download_photo()`. These are Telegram-specific (calling `voice.get_file().download_as_bytearray()` and `photo[-1].get_file().download_as_bytearray()`). The extracted bytes populate `IncomingMessage.voice_bytes` / `IncomingMessage.image_bytes`. The engine never downloads anything — it receives raw bytes.
 
 **Key invariant:** `core/` never imports from `bot/`, `webhook/`, or `telegram`. It only depends on `backend.py`, `context.py`, `db.py`, `router/`, `tools/`, and `config.py`.
+
+**`core/prompt.py` invariant:** This is a **leaf module**. It imports only from `config.py` and `tools/memory.py`. It does NOT import from `core/engine.py`, `router/`, or any other `tools/` module. This prevents circular import chains when `subagent.py` and `cron/executor.py` import `_build_system_prompt`.
 
 ---
 
@@ -490,7 +512,7 @@ Two changes:
 from spare_paw.bot.handler import _build_system_prompt
 
 # After:
-from spare_paw.core.engine import _build_system_prompt
+from spare_paw.core.prompt import _build_system_prompt
 ```
 
 ### 8b: Replace send calls with `backend.send_text()`
@@ -609,7 +631,8 @@ The `_handle_callback` function for tool approval buttons stays in `bot/handler.
 |------|--------|
 | `src/spare_paw/backend.py` | **NEW** — `MessageBackend` protocol (with `send_notification`) + `IncomingMessage` dataclass |
 | `src/spare_paw/core/__init__.py` | **NEW** — empty |
-| `src/spare_paw/core/engine.py` | **NEW** — platform-agnostic message processor + queue + `_build_system_prompt` + `_split_text` (extracted from handler.py) |
+| `src/spare_paw/core/prompt.py` | **NEW** — `_build_system_prompt` (leaf module: only imports config + tools/memory, no engine/router/tools imports) |
+| `src/spare_paw/core/engine.py` | **NEW** — platform-agnostic message processor + queue + `_split_text` (extracted from handler.py) |
 | `src/spare_paw/core/voice.py` | **MOVE** from `bot/voice.py` — accepts `bytes`, no Telegram import |
 | `src/spare_paw/core/commands.py` | **NEW** — platform-agnostic command logic (extracted from bot/commands.py) |
 | `src/spare_paw/webhook/__init__.py` | **NEW** — empty |
@@ -619,7 +642,7 @@ The `_handle_callback` function for tool approval buttons stays in `bot/handler.
 | `src/spare_paw/bot/handler.py` | **MODIFY** — thin Telegram→IncomingMessage adapter, delegates to core/engine. Keeps `_extract_cron_context`, `_download_voice`, `_download_photo`, `_handle_callback` |
 | `src/spare_paw/bot/commands.py` | **MODIFY** — thin wrapper, delegates to core/commands.py |
 | `src/spare_paw/bot/voice.py` | **DELETE** — moved to core/voice.py |
-| `src/spare_paw/cron/executor.py` | **MODIFY** — use `backend.send_text()` instead of `bot.send_message()`, update `_build_system_prompt` import to `core.engine`, delete `_send_chunked()` |
+| `src/spare_paw/cron/executor.py` | **MODIFY** — use `backend.send_text()` instead of `bot.send_message()`, update `_build_system_prompt` import to `core.prompt`, delete `_send_chunked()` |
 | `src/spare_paw/gateway.py` | **MODIFY** — `AppState.backend` replaces `.application`, mode selection, tool rewiring, remove `set_my_commands`/handler setup/media dispatch/`BotCommand` import/`Application` import |
 | `src/spare_paw/tools/custom_tools.py` | **MODIFY** — replace `InlineKeyboardButton/Markup` import with `backend.send_notification()` call |
 | `src/spare_paw/__main__.py` | **MODIFY** — add `webhook` command |
@@ -665,24 +688,34 @@ Every step follows **Red → Green → Refactor**: write failing tests first, th
 
 **Then implement:** Move `bot/voice.py` → `core/voice.py`, change signature from `TelegramFile` to `bytes`
 
-#### Step 3: `core/engine.py` — platform-agnostic message processor
+#### Step 3: `core/prompt.py` + `core/engine.py` — platform-agnostic core
 
 This is the biggest step. Break it into sub-steps, each with its own test cycle.
 
-**3a: `_build_system_prompt` + `_split_text` (pure functions)**
+**3a: `core/prompt.py` — `_build_system_prompt` (leaf module)**
 
-Tests first (`tests/test_engine.py`):
+Tests first (`tests/test_prompt.py`):
 - `_build_system_prompt(config)` returns base prompt + prompt file contents + memories
 - `_build_system_prompt` injects `{current_time}` replacement
+- No `telegram` import in `core/prompt.py`
+- No import from `core/engine.py`, `router/`, or `tools/subagent.py` (leaf module invariant)
+
+Then implement: extract `_build_system_prompt` from `handler.py` into `core/prompt.py`. **Do NOT update `cron/executor.py` or `subagent.py` imports yet** — keep `handler.py` re-exporting via `from spare_paw.core.prompt import _build_system_prompt` so existing callers don't break.
+
+**3b: `_split_text` (pure function in engine.py)**
+
+Tests first (`tests/test_engine.py`):
 - `_split_text("short", 100)` → `["short"]`
 - `_split_text(long_text, 50)` → multiple chunks, each ≤ 50 chars
 - `_split_text` prefers splitting at newlines
 - `_split_text` hard-cuts when no newline found
 - No `telegram` import in `core/engine.py`
 
-Then implement: extract `_build_system_prompt` and `_split_text` from `handler.py` into `core/engine.py`. Update `cron/executor.py` import path. Existing `test_telegram_format.py` must still pass (it imports `_split_text` — update that import or re-export).
+Then implement: extract `_split_text` from `handler.py` into `core/engine.py`. Keep `handler.py` re-exporting it so `test_telegram_format.py` doesn't break.
 
-**3b: `process_message(app_state, msg, backend)` — core message loop**
+**IMPORTANT: `_md_to_html` and `_convert_tables` stay in `handler.py` until Step 5.** Do NOT move formatting functions in this step — `test_telegram_format.py` imports them from `handler.py` and must keep passing.
+
+**3c: `process_message(app_state, msg, backend)` — core message loop**
 
 Tests first (`tests/test_engine.py`):
 - `process_message` with text-only `IncomingMessage`: calls `context.ingest`, assembles context, runs tool loop, calls `backend.send_text()` with the response
@@ -695,7 +728,7 @@ Tests first (`tests/test_engine.py`):
 
 Then implement: extract message processing logic from `_handle_message` into `process_message`.
 
-**3c: `process_agent_callback(app_state, synthetic_text, backend)`**
+**3d: `process_agent_callback(app_state, synthetic_text, backend)`**
 
 Tests first (`tests/test_engine.py`):
 - Ingests augmented text, assembles context, runs tool loop
@@ -704,16 +737,23 @@ Tests first (`tests/test_engine.py`):
 
 Then implement: extract from `_handle_agent_callback`.
 
-**3d: Queue processor**
+**3e+6 (ATOMIC): Queue processor + handler adapter**
 
-Tests first (`tests/test_engine.py`):
+⚠️ **These two must land in a single commit.** The queue format changes from `(Update, context)` to `IncomingMessage`, and the handler must be updated to produce `IncomingMessage` in the same commit. Otherwise the handler pushes `(Update, context)` but the engine expects `IncomingMessage` — runtime crash.
+
+Tests first (`tests/test_engine.py` + `tests/test_handler.py`):
 - `enqueue(msg)` puts `IncomingMessage` on queue
 - `enqueue(("agent_callback", text))` works for agent callbacks
 - Queue processor calls `process_message` for `IncomingMessage` items
 - Queue processor calls `process_agent_callback` for agent callback items
 - `start_queue_processor` injects queue reference into `subagent._message_queue`
+- `_queue_message` builds `IncomingMessage` from mock `Update` and calls `engine.enqueue`
+- `_download_voice` returns raw bytes from `voice.get_file().download_as_bytearray()`
+- `_download_photo` returns raw bytes from `photo[-1].get_file().download_as_bytearray()`
+- `_extract_cron_context` returns text when replying to bot message, `None` otherwise
+- `_handle_callback` for approve/reject still works via `context.bot_data["app_state"]`
 
-Then implement: move queue logic from `handler.py` to `engine.py`.
+Then implement: move queue logic from `handler.py` to `engine.py` AND slim down handler.py to produce `IncomingMessage` objects — all in one commit.
 
 #### Step 4: `core/commands.py` — platform-agnostic command functions
 
@@ -751,20 +791,9 @@ Then implement: move queue logic from `handler.py` to `engine.py`.
 - `stop()` calls `updater.stop`, `application.stop`, `application.shutdown`
 - `set_app_state()` stores on `application.bot_data["app_state"]`
 
-**Then implement:** Create `TelegramBackend` class, move `_md_to_html`, `_convert_tables` from handler.py.
+**Then implement:** Create `TelegramBackend` class, move `_md_to_html`, `_convert_tables` from handler.py. Delete `test_telegram_format.py` (tests migrated to `test_telegram_backend.py`). NOW `_md_to_html` leaves handler.py.
 
-#### Step 6: `bot/handler.py` — slim down to adapter
-
-**Tests first** (update `tests/test_handler.py` or add to existing):
-- `_queue_message` builds `IncomingMessage` from mock `Update` and calls `engine.enqueue`
-- `_download_voice` returns raw bytes from `voice.get_file().download_as_bytearray()`
-- `_download_photo` returns raw bytes from `photo[-1].get_file().download_as_bytearray()`
-- `_extract_cron_context` returns text when replying to bot message, `None` otherwise
-- `_handle_callback` for approve/reject still works via `context.bot_data["app_state"]`
-
-**Then implement:** Slim down handler.py — delegate to `engine.process_message(app_state, msg, backend)`.
-
-#### Step 7: `bot/commands.py` — slim down to wrapper
+#### Step 6: `bot/commands.py` — slim down to wrapper
 
 **Tests first** (update `tests/test_commands.py`):
 - Each `/command` handler calls the corresponding `core.commands.cmd_*` function
@@ -775,37 +804,53 @@ Then implement: move queue logic from `handler.py` to `engine.py`.
 
 ### Phase 3: Wiring (behavior-preserving)
 
-#### Step 8: `gateway.py` — backend selection + tool rewiring
+⚠️ **Order matters here.** Steps 7-8 rewire consumers that reference `app_state.application`. Step 9 removes `app_state.application`. If Step 9 lands before 7-8, those consumers crash at runtime.
 
-**Tests first** (`tests/test_gateway.py`):
-- `AppState` has `backend` field (not `application`)
-- `send_message` tool calls `app_state.backend.send_text()`
-- `send_file` tool calls `app_state.backend.send_file()`
-- No `telegram` import in gateway.py
-- Mode selection: `mode="telegram"` creates `TelegramBackend`, `mode="webhook"` creates `WebhookBackend`
-
-**Then implement:** Refactor gateway.py.
-
-#### Step 9: `cron/executor.py` — use backend
+#### Step 7: `cron/executor.py` — use backend
 
 **Tests first** (update `tests/test_cron.py`):
 - Executor calls `backend.send_text(result)` instead of `bot.send_message`
-- `_build_system_prompt` imported from `core.engine`, not `bot.handler`
+- `_build_system_prompt` imported from `core.prompt`, not `bot.handler`
 - No `_send_chunked` function exists
 
-**Then implement:** Update imports, replace send calls.
+**Then implement:** Update imports, replace send calls. This step removes the last `app_state.application` reference from executor.py.
 
-#### Step 10: `tools/custom_tools.py` — remove Telegram import
+#### Step 8: `tools/custom_tools.py` — remove Telegram import
 
 **Tests first** (update `tests/test_tools.py`):
 - `_handle_tool_create` calls `backend.send_notification()` with actions list
 - No `telegram` import in `custom_tools.py`
 
-**Then implement:** Replace `InlineKeyboardButton/Markup` with `backend.send_notification()`.
+**Then implement:** Replace `InlineKeyboardButton/Markup` with `backend.send_notification()`. This step removes the last `app_state.application` reference from custom_tools.py.
+
+#### Step 9: `gateway.py` — backend selection + tool rewiring
+
+**Tests first** (`tests/test_gateway.py`):
+- `AppState` has `backend` field
+- `AppState.application` property exists as deprecated shim (returns `backend._application` for `TelegramBackend`, `None` otherwise)
+- `send_message` tool calls `app_state.backend.send_text()`
+- `send_file` tool calls `app_state.backend.send_file()`
+- No `telegram` import in gateway.py
+- Mode selection: `mode="telegram"` creates `TelegramBackend`, `mode="webhook"` creates `WebhookBackend`
+
+**Then implement:** Refactor gateway.py. Add `backend` field to `AppState`. Add deprecated `application` property as safety net:
+
+```python
+@property
+def application(self):
+    """Deprecated — use backend. Kept temporarily to catch missed references."""
+    import warnings
+    warnings.warn("app_state.application is deprecated, use app_state.backend", DeprecationWarning, stacklevel=2)
+    if hasattr(self.backend, '_application'):
+        return self.backend._application
+    return None
+```
+
+This ensures any missed `app_state.application` reference logs a warning instead of crashing, giving us time to find and fix it. Remove the shim once all tests pass and the codebase is clean.
 
 ### Phase 4: New capability
 
-#### Step 11: `webhook/` — HTTP backend
+#### Step 10: `webhook/` — HTTP backend
 
 **Tests first** (`tests/test_webhook.py`):
 - `WebhookBackend` satisfies `isinstance(backend, MessageBackend)` check
@@ -821,7 +866,7 @@ Then implement: move queue logic from `handler.py` to `engine.py`.
 
 **Then implement:** `webhook/backend.py` + `webhook/server.py`.
 
-#### Step 12: `__main__.py` — add webhook command
+#### Step 11: `__main__.py` — add webhook command
 
 **Tests first** (`tests/test_main.py`):
 - `python -m spare_paw webhook` calls `run(mode="webhook")`
@@ -831,12 +876,16 @@ Then implement: move queue logic from `handler.py` to `engine.py`.
 
 ### Phase 5: Isolation verification
 
-#### Step 13: Import isolation check
+#### Step 12: Import isolation check
 
 **Test** (`tests/test_isolation.py`):
 - Scan all `.py` files outside `bot/` for `import telegram` or `from telegram` — assert zero matches
 - Scan `core/` for any platform-specific imports — assert zero
 - This test runs in CI as a gate
+
+#### Step 13: Remove deprecated `app_state.application` shim
+
+Once all tests pass and production is stable, remove the deprecated property from Step 9.
 
 ---
 
@@ -846,19 +895,20 @@ Then implement: move queue logic from `handler.py` to `engine.py`.
 |---|---|---|
 | `backend.py` | `test_backend.py` | Protocol compliance, dataclass defaults |
 | `core/voice.py` | `test_voice.py` | Bytes input, mock Groq, error cases |
-| `core/engine.py` | `test_engine.py` | process_message, process_agent_callback, queue, pure functions |
+| `core/prompt.py` | `test_prompt.py` | Leaf module invariant, prompt assembly |
+| `core/engine.py` | `test_engine.py` | process_message, process_agent_callback, queue, _split_text |
 | `core/commands.py` | `test_commands.py` | Pure functions returning strings |
 | `bot/backend.py` | `test_telegram_backend.py` | md→HTML, chunking, media dispatch, inline keyboard |
 | `bot/handler.py` | `test_handler.py` | Update→IncomingMessage adapter |
 | `bot/commands.py` | `test_commands.py` | Delegation to core.commands |
-| `gateway.py` | `test_gateway.py` | Backend selection, tool rewiring |
-| `cron/executor.py` | `test_cron.py` | backend.send_text, import path |
+| `cron/executor.py` | `test_cron.py` | backend.send_text, import from core.prompt |
 | `custom_tools.py` | `test_tools.py` | backend.send_notification |
+| `gateway.py` | `test_gateway.py` | Backend selection, tool rewiring, deprecated shim |
 | `webhook/` | `test_webhook.py` | HTTP endpoints, SSE, queue |
 | `__main__.py` | `test_main.py` | CLI mode selection |
 | isolation | `test_isolation.py` | No telegram imports outside bot/ |
 
-Steps 1-10 don't change any behavior — Telegram mode works exactly as before. Step 11 adds the new capability. This ordering minimizes risk.
+Steps 1-9 don't change any behavior — Telegram mode works exactly as before. Step 10 adds the new capability. This ordering minimizes risk.
 
 ---
 
@@ -872,9 +922,59 @@ Steps 1-10 don't change any behavior — Telegram mode works exactly as before. 
 
 ## Risks and mitigations
 
-1. **Circular imports** — `core/engine.py` imports from `tools/`, `router/`, `context/`. `tools/subagent.py` pushes to `core/engine._message_queue`. Risk of circular import if subagent imports engine directly. Mitigation: use the existing injection pattern (engine sets `subagent._message_queue` at startup, no import needed).
-2. **`app_state` availability in Telegram handlers** — After hiding `Application` inside `TelegramBackend`, handlers still need `app_state`. Mitigation: `TelegramBackend.set_app_state()` stores it on `application.bot_data`, preserving the existing access pattern.
-3. **Queue reference migration** — `handler._message_queue` moves to `engine._message_queue`. Mitigation: the reference is injected (not imported) — `start_queue_processor` sets `subagent._message_queue`, so the move is transparent to subagent.py.
+### HIGH
+
+1. **Circular import: `engine.py` ↔ `subagent.py` via `_build_system_prompt`**
+
+   The chain: `engine.py` → `tools/` → `subagent.py` → `_build_system_prompt`. If `_build_system_prompt` lives in `engine.py`, subagent importing it creates `engine → tools → engine`. Currently safe only because subagent uses a lazy import — but one careless top-level import later and it breaks.
+
+   **Mitigation:** `_build_system_prompt` lives in `core/prompt.py` (leaf module), NOT in `engine.py`. `core/prompt.py` imports only from `config.py` and `tools/memory.py`. No cycle possible regardless of import style.
+
+### MEDIUM
+
+2. **`app_state.application` removal before consumers are rewired**
+
+   `cron/executor.py:105` and `custom_tools.py:287` reach for `app_state.application.bot`. If Step 9 (gateway refactor) removes `app_state.application` before Steps 7-8 rewire these consumers → runtime crash. Crons silently stop delivering results; tool approval notifications disappear.
+
+   **Mitigation:** Strict ordering — Steps 7 (executor) and 8 (custom_tools) MUST land before Step 9 (gateway). Step 9 adds a deprecated `application` property shim that logs `DeprecationWarning` instead of crashing, as safety net for any missed references.
+
+3. **Queue format change breaks handler mid-refactor**
+
+   The queue currently accepts `(Update, context)` tuples. After refactor, it accepts `IncomingMessage`. If engine's queue processor is updated (Step 3e) but handler still pushes `(Update, context)` (Step 6 not done yet) → `process_message` receives a Telegram `Update` object instead of `IncomingMessage` → `AttributeError` at runtime.
+
+   **Mitigation:** Steps 3e and 6 (handler adapter) are merged into a single atomic commit. Both sides of the queue contract change together.
+
+4. **Test imports break during migration window**
+
+   `test_telegram_format.py:3` imports `from spare_paw.bot.handler import _md_to_html`. If Step 3 removes `_md_to_html` from handler.py (because "extract everything"), tests break before Step 5 moves them.
+
+   **Mitigation:** `_md_to_html` and `_convert_tables` stay in `handler.py` until Step 5. Step 3 only extracts `_build_system_prompt` (to `core/prompt.py`) and `_split_text` (to `core/engine.py`). Handler re-exports both via `from spare_paw.core.prompt import _build_system_prompt` so existing callers don't break. `_md_to_html` moves in Step 5 when tests are migrated to `test_telegram_backend.py` in the same commit.
+
+5. **`app_state` availability in Telegram handlers post-refactor**
+
+   After hiding `Application` inside `TelegramBackend`, handlers still need `app_state` via `context.bot_data["app_state"]`.
+
+   **Mitigation:** `TelegramBackend.set_app_state()` stores it on `application.bot_data`, preserving the existing access pattern. Tested in Step 5.
+
+### LOW
+
+6. **Queue reference migration**
+
+   `handler._message_queue` moves to `engine._message_queue`. If subagent.py imports queue directly instead of using injection, circular import risk.
+
+   **Mitigation:** Keep existing injection pattern — `start_queue_processor` sets `subagent._message_queue = _message_queue` at runtime. No import of engine from subagent needed.
+
+7. **`_extract_cron_context` integration gap**
+
+   Tested in isolation (Step 3e) but no integration test verifying the full flow: handler extracts cron context → populates `IncomingMessage.cron_context` → engine injects context into assembled messages → model receives it.
+
+   **Mitigation:** Add an integration test in Step 3e that feeds an `IncomingMessage(cron_context="some cron output")` through `process_message` and verifies the context appears in the assembled messages passed to `run_tool_loop`.
+
+8. **No incremental rollback path**
+
+   13 steps, each changing internal APIs. If Step 6 breaks production, reverting it without also reverting Steps 3-5 is difficult because they share import path changes.
+
+   **Mitigation:** Each step's commit must leave the codebase in a passing-tests, deployable state. Re-exports (e.g., handler.py re-exporting `_build_system_prompt` from `core/prompt.py`) act as compatibility shims during transition. The deprecated `application` property in Step 9 serves the same purpose. If a step breaks, revert only that step's commit — re-exports ensure earlier steps remain compatible.
 
 ---
 
@@ -888,6 +988,7 @@ Tests are written **before** implementation at every step (see Implementation or
 
 **Key testing principles:**
 - Every `core/` module is tested with mock backends — no Telegram dependency in tests
+- `test_prompt.py` verifies `core/prompt.py` is a leaf module (no engine/router/tools imports) — this is the circular import prevention gate
 - `test_telegram_backend.py` absorbs all existing `test_telegram_format.py` tests (which currently import from `handler.py`)
 - `test_isolation.py` is a static analysis gate — scans for `telegram` imports outside `bot/`
 - Existing tests must pass at every step. Any import path changes (e.g. `_split_text` moving from handler to engine) require updating test imports in the same commit.
