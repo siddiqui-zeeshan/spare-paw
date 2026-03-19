@@ -9,7 +9,6 @@ processing.
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -21,7 +20,7 @@ from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, fil
 
 from spare_paw.bot.commands import register_commands
 from spare_paw.core.prompt import build_system_prompt as _build_system_prompt  # noqa: F401
-from spare_paw.core.voice import VoiceTranscriptionError, transcribe
+from spare_paw.core.voice import VoiceTranscriptionError  # noqa: F401
 
 if TYPE_CHECKING:
     from telegram.ext import Application
@@ -30,10 +29,6 @@ logger = logging.getLogger(__name__)
 
 # Telegram message length limit
 _MAX_MESSAGE_LENGTH = 4096
-
-# Module-level queue — initialized per-application in post_init
-_message_queue: asyncio.Queue | None = None
-_queue_task: asyncio.Task | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -71,20 +66,23 @@ def setup_handlers(application: "Application") -> None:
 # ---------------------------------------------------------------------------
 
 def start_queue_processor(application: "Application") -> None:
-    """Start the background task that drains the message queue."""
-    global _message_queue, _queue_task
-    _message_queue = asyncio.Queue()
-    _queue_task = asyncio.create_task(_process_queue(application))
+    """Start the background queue processor via core/engine.
 
-    # Share the queue with the subagent module for callbacks
-    from spare_paw.tools import subagent as subagent_mod
-    subagent_mod._message_queue = _message_queue
+    Delegates to engine.start_queue_processor which owns the queue.
+    """
+    from spare_paw.core.engine import start_queue_processor as _engine_start
 
-    logger.info("Message queue processor started")
+    app_state = application.bot_data.get("app_state")
+    backend = getattr(app_state, "backend", None) if app_state else None
+
+    if app_state and backend:
+        _engine_start(app_state, backend)
+    else:
+        logger.warning("Cannot start queue processor: app_state or backend not available")
 
 
 async def _queue_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Put an incoming message on the queue for sequential processing."""
+    """Build IncomingMessage from Telegram Update and enqueue for processing."""
     app_state = context.bot_data.get("app_state")
     if app_state is None:
         return
@@ -94,265 +92,49 @@ async def _queue_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if update.effective_user is None or update.effective_user.id != owner_id:
         return
 
-    if _message_queue is not None:
-        await _message_queue.put((update, context))
+    from spare_paw.backend import IncomingMessage
+    from spare_paw.core.engine import enqueue
 
-
-async def _process_queue(application: "Application") -> None:
-    """Drain the message queue, processing one message at a time.
-
-    Handles both regular Telegram messages and synthetic agent callback
-    messages (pushed by subagents when a group completes).
-    """
-    global _message_queue
-    assert _message_queue is not None
-
-    while True:
-        try:
-            item = await _message_queue.get()
-            try:
-                # Agent callback: ("agent_callback", synthetic_text)
-                if isinstance(item, tuple) and len(item) == 2 and item[0] == "agent_callback":
-                    await _handle_agent_callback(item[1], application)
-                else:
-                    update, context = item
-                    await _handle_message(update, context)
-            except Exception:
-                logger.exception("Unhandled error processing queue item")
-                # Only try to reply if it was a regular message
-                if not (isinstance(item, tuple) and item[0] == "agent_callback"):
-                    try:
-                        update, _ctx = item
-                        await update.message.reply_text(
-                            "An internal error occurred. Please try again."
-                        )
-                    except Exception:
-                        logger.exception("Failed to send error reply")
-            finally:
-                _message_queue.task_done()
-        except asyncio.CancelledError:
-            logger.info("Message queue processor cancelled")
-            break
-        except Exception:
-            logger.exception("Fatal error in queue processor loop")
-            await asyncio.sleep(1)  # Prevent tight error loop
-
-
-# ---------------------------------------------------------------------------
-# Core message processing
-# ---------------------------------------------------------------------------
-
-async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Process a single user message end-to-end."""
-    app_state = context.bot_data["app_state"]
-    chat_id = update.effective_chat.id
-
-    # Start typing indicator in background
-    typing_task = asyncio.create_task(_send_typing_loop(context, chat_id))
-
-    try:
-        # 1. Extract text + optional image
-        text, image_url = await _extract_content(update, app_state)
-        if not text:
-            return
-
-        # 2. Import context module
-        from spare_paw import context as ctx_module
-
-        # 3. Check if this is a reply to a cron result
-        cron_context = _extract_cron_context(update)
-
-        # 4. Get or create conversation
-        conversation_id = await ctx_module.get_or_create_conversation()
-
-        # 5. Ingest user message into context (text only for storage)
-        await ctx_module.ingest(conversation_id, "user", text)
-
-        # 6. Assemble context with system prompt + prompt files
-        system_prompt = await _build_system_prompt(app_state.config)
-
-        messages = await ctx_module.assemble(conversation_id, system_prompt)
-
-        # 6a. If this message has an image, replace the last user message
-        # with multimodal content (text + image_url)
-        if image_url and messages:
-            # Find the last user message and make it multimodal
-            for i in range(len(messages) - 1, -1, -1):
-                if messages[i]["role"] == "user":
-                    messages[i]["content"] = [
-                        {"type": "text", "text": text},
-                        {"type": "image_url", "image_url": {"url": image_url}},
-                    ]
-                    break
-
-        # 6b. If replying to a cron result, inject one-off context
-        if cron_context:
-            messages.append({
-                "role": "user",
-                "content": (
-                    f"[Context: The user is replying to a cron job result. "
-                    f"Original cron output:\n{cron_context}]"
-                ),
-            })
-
-        # 7. Run tool loop
-        model = app_state.config.get("models.default", "google/gemini-2.0-flash")
-        tool_schemas = app_state.tool_registry.get_schemas()
-        max_iterations = app_state.config.get("agent.max_tool_iterations", 20)
-
-        from spare_paw.router.tool_loop import run_tool_loop
-
-        response_text = await run_tool_loop(
-            client=app_state.router_client,
-            messages=messages,
-            model=model,
-            tools=tool_schemas,
-            tool_registry=app_state.tool_registry,
-            max_iterations=max_iterations,
-            executor=app_state.executor,
-        )
-
-        # 8. Ingest assistant response
-        await ctx_module.ingest(conversation_id, "assistant", response_text)
-
-        # 9. Run LCM compaction in background (non-blocking)
-        summary_model = app_state.config.get(
-            "context.summary_model", "google/gemini-3.1-flash-lite-preview"
-        )
-        asyncio.create_task(
-            ctx_module.compact_with_retry(conversation_id, app_state.router_client, summary_model),
-            name="lcm-compact",
-        )
-
-        # 10. Send response back via Telegram (chunked if needed)
-        await _send_response(update, response_text)
-
-    finally:
-        typing_task.cancel()
-        try:
-            await typing_task
-        except asyncio.CancelledError:
-            pass
-
-
-async def _handle_agent_callback(synthetic_text: str, application: "Application") -> None:
-    """Process a synthetic agent callback by feeding results to the main LLM.
-
-    The main LLM synthesizes a coherent response from the agent results
-    and sends it to the user. The response is ingested into conversation
-    memory so the LLM can reference it in future turns.
-    """
-    app_state = application.bot_data.get("app_state")
-    if app_state is None:
-        logger.warning("Agent callback received but app_state not available")
-        return
-
-    owner_id = app_state.config.get("telegram.owner_id")
-    if not owner_id:
-        return
-
-    try:
-        from spare_paw import context as ctx_module
-        from spare_paw.router.tool_loop import run_tool_loop
-
-        # Get or create conversation
-        conversation_id = await ctx_module.get_or_create_conversation()
-
-        # Ingest the agent results with instructions for the main LLM
-        augmented_text = (
-            f"{synthetic_text}\n\n"
-            "[INSTRUCTIONS] The above are results from background agents you spawned. "
-            "Present the FULL findings to the user — include all details, data, links, "
-            "and comparisons the agents found. Do NOT summarize into a single sentence. "
-            "Format the response clearly for Telegram."
-        )
-        await ctx_module.ingest(conversation_id, "user", augmented_text)
-
-        # Assemble context with the agent results included
-        system_prompt = await _build_system_prompt(app_state.config)
-        messages = await ctx_module.assemble(conversation_id, system_prompt)
-
-        # Run the main LLM to synthesize a response
-        model = app_state.config.get("models.default", "google/gemini-2.0-flash")
-        tool_schemas = app_state.tool_registry.get_schemas()
-        max_iterations = app_state.config.get("agent.max_tool_iterations", 20)
-
-        response_text = await run_tool_loop(
-            client=app_state.router_client,
-            messages=messages,
-            model=model,
-            tools=tool_schemas,
-            tool_registry=app_state.tool_registry,
-            max_iterations=max_iterations,
-            executor=app_state.executor,
-        )
-
-        # Ingest the synthesized response into memory
-        await ctx_module.ingest(conversation_id, "assistant", response_text)
-
-        # Send to user via Telegram
-        bot = application.bot
-        chunks = _split_text(response_text, _MAX_MESSAGE_LENGTH)
-        for chunk in chunks:
-            try:
-                html = _md_to_html(chunk)
-                await bot.send_message(
-                    chat_id=owner_id, text=html,
-                    parse_mode=ParseMode.HTML,
-                )
-            except Exception:
-                await bot.send_message(chat_id=owner_id, text=chunk)
-
-    except Exception:
-        logger.exception("Failed to handle agent callback")
-        try:
-            bot = application.bot
-            await bot.send_message(
-                chat_id=owner_id,
-                text="Agent results received but I failed to process them. "
-                     "Use /search to find the raw results.",
-            )
-        except Exception:
-            logger.exception("Failed to send agent callback error")
-
-
-async def _extract_content(
-    update: Update, app_state: Any
-) -> tuple[str | None, str | None]:
-    """Extract text and optional base64 image from a message.
-
-    Returns (text, image_base64). image_base64 is a data URI if a photo
-    is attached, or None for text/voice-only messages.
-    """
     message = update.message
+    if message is None:
+        return
 
-    # Voice message
-    if message.voice is not None:
-        try:
-            voice_file = await message.voice.get_file()
-            text = await transcribe(voice_file, app_state.config.data)
-            await message.reply_text(f"[Voice] {text}", do_quote=True)
-            return text, None
-        except VoiceTranscriptionError as exc:
-            await message.reply_text(str(exc))
-            return None, None
+    msg = IncomingMessage(
+        text=message.text,
+        voice_bytes=(await _download_voice(message)) if message.voice else None,
+        image_bytes=(await _download_photo(message)) if message.photo else None,
+        caption=message.caption,
+        cron_context=_extract_cron_context(update),
+        user_id=update.effective_user.id if update.effective_user else None,
+    )
 
-    # Photo message
-    if message.photo:
-        # Get the largest resolution photo
+    await enqueue(msg)
+
+
+# ---------------------------------------------------------------------------
+# Telegram-specific download helpers
+# ---------------------------------------------------------------------------
+
+
+async def _download_voice(message: Any) -> bytes | None:
+    """Download voice message bytes from Telegram."""
+    try:
+        voice_file = await message.voice.get_file()
+        return bytes(await voice_file.download_as_bytearray())
+    except Exception:
+        logger.exception("Failed to download voice message")
+        return None
+
+
+async def _download_photo(message: Any) -> bytes | None:
+    """Download the largest photo resolution from Telegram."""
+    try:
         photo = message.photo[-1]
         file = await photo.get_file()
-        photo_bytes = await file.download_as_bytearray()
-        b64 = base64.b64encode(photo_bytes).decode("ascii")
-        image_url = f"data:image/jpeg;base64,{b64}"
-        text = message.caption or "What do you see in this image?"
-        return text, image_url
-
-    # Text message
-    if message.text:
-        return message.text, None
-
-    return None, None
+        return bytes(await file.download_as_bytearray())
+    except Exception:
+        logger.exception("Failed to download photo")
+        return None
 
 
 def _extract_cron_context(update: Update) -> str | None:

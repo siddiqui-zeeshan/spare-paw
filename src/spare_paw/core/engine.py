@@ -23,6 +23,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Module-level queue — initialized by start_queue_processor
+_message_queue: asyncio.Queue | None = None
+_queue_task: asyncio.Task | None = None
+
 
 def split_text(text: str, max_length: int) -> list[str]:
     """Split text into chunks of at most *max_length* characters.
@@ -198,3 +202,63 @@ async def process_agent_callback(
             )
         except Exception:
             logger.exception("Failed to send agent callback error")
+
+
+# ---------------------------------------------------------------------------
+# Queue management
+# ---------------------------------------------------------------------------
+
+
+async def enqueue(item: IncomingMessage | tuple) -> None:
+    """Put a message or agent callback on the processing queue."""
+    if _message_queue is not None:
+        await _message_queue.put(item)
+
+
+def start_queue_processor(app_state: Any, backend: MessageBackend) -> None:
+    """Start the background task that drains the message queue."""
+    global _message_queue, _queue_task
+    _message_queue = asyncio.Queue()
+    _queue_task = asyncio.create_task(_process_queue(app_state, backend))
+
+    # Share the queue with the subagent module for callbacks
+    from spare_paw.tools import subagent as subagent_mod
+    subagent_mod._message_queue = _message_queue
+
+    logger.info("Message queue processor started")
+
+
+async def _process_queue(app_state: Any, backend: MessageBackend) -> None:
+    """Drain the message queue, processing one message at a time."""
+    from spare_paw.backend import IncomingMessage as _IncomingMessage
+
+    assert _message_queue is not None
+
+    while True:
+        try:
+            item = await _message_queue.get()
+            try:
+                if isinstance(item, tuple) and len(item) == 2 and item[0] == "agent_callback":
+                    await process_agent_callback(app_state, item[1], backend)
+                elif isinstance(item, _IncomingMessage):
+                    # Start typing indicator
+                    await backend.send_typing()
+                    await process_message(app_state, item, backend)
+                else:
+                    logger.warning("Unknown item type in queue: %s", type(item))
+            except Exception:
+                logger.exception("Unhandled error processing queue item")
+                try:
+                    await backend.send_text(
+                        "An internal error occurred. Please try again."
+                    )
+                except Exception:
+                    logger.exception("Failed to send error reply")
+            finally:
+                _message_queue.task_done()
+        except asyncio.CancelledError:
+            logger.info("Message queue processor cancelled")
+            break
+        except Exception:
+            logger.exception("Fatal error in queue processor loop")
+            await asyncio.sleep(1)
