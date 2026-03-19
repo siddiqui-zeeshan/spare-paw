@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from spare_paw.backend import IncomingMessage
-from spare_paw.core.engine import process_message, split_text
+from spare_paw.core.engine import process_agent_callback, process_message, split_text
 
 
 class TestSplitText:
@@ -191,6 +191,60 @@ class TestProcessMessage:
         await process_message(app_state, msg, backend)
 
         backend.send_text.assert_not_awaited()
+
+
+class TestProcessAgentCallback:
+    @pytest.mark.asyncio
+    async def test_ingests_and_sends(self):
+        """Agent callback: ingest augmented text, run tool loop, send result."""
+        app_state = _make_app_state()
+        backend = _make_backend()
+
+        with patch("spare_paw.core.engine.ctx_module") as mock_ctx, \
+             patch("spare_paw.core.engine.run_tool_loop", new_callable=AsyncMock, return_value="Synthesized response"), \
+             patch("spare_paw.core.engine.build_system_prompt", new_callable=AsyncMock, return_value="sys"), \
+             patch("spare_paw.core.engine.compact_with_retry", new_callable=AsyncMock):
+            mock_ctx.get_or_create_conversation = AsyncMock(return_value="conv-1")
+            mock_ctx.ingest = AsyncMock(return_value="msg-1")
+            mock_ctx.assemble = AsyncMock(return_value=[
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "agent results"},
+            ])
+
+            await process_agent_callback(app_state, "agent results", backend)
+
+        # Verify augmented text was ingested
+        ingest_calls = mock_ctx.ingest.await_args_list
+        user_calls = [c for c in ingest_calls if c.args[1] == "user"]
+        assert len(user_calls) >= 1
+        assert "agent results" in user_calls[0].args[2]
+
+        # Verify response ingested
+        assistant_calls = [c for c in ingest_calls if c.args[1] == "assistant"]
+        assert len(assistant_calls) >= 1
+
+        # Verify backend received the synthesized response
+        backend.send_text.assert_awaited_once_with("Synthesized response")
+
+    @pytest.mark.asyncio
+    async def test_error_sends_fallback(self):
+        """On failure, sends error message via backend."""
+        app_state = _make_app_state()
+        backend = _make_backend()
+
+        with patch("spare_paw.core.engine.ctx_module") as mock_ctx, \
+             patch("spare_paw.core.engine.run_tool_loop", new_callable=AsyncMock, side_effect=Exception("boom")), \
+             patch("spare_paw.core.engine.build_system_prompt", new_callable=AsyncMock, return_value="sys"):
+            mock_ctx.get_or_create_conversation = AsyncMock(return_value="conv-1")
+            mock_ctx.ingest = AsyncMock(return_value="msg-1")
+            mock_ctx.assemble = AsyncMock(return_value=[])
+
+            await process_agent_callback(app_state, "agent results", backend)
+
+        # Should have sent an error message
+        backend.send_text.assert_awaited_once()
+        sent_text = backend.send_text.await_args.args[0]
+        assert "failed" in sent_text.lower() or "error" in sent_text.lower()
 
 
 class TestNoTelegramImport:

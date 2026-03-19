@@ -143,3 +143,58 @@ async def process_message(
 
     # 10. Send response via backend (markdown — backend handles formatting)
     await backend.send_text(response_text)
+
+
+async def process_agent_callback(
+    app_state: Any,
+    synthetic_text: str,
+    backend: MessageBackend,
+) -> None:
+    """Process a synthetic agent callback by feeding results to the main LLM.
+
+    The main LLM synthesizes a coherent response from the agent results
+    and sends it to the user via the backend.
+    """
+    ctx = ctx_module
+
+    try:
+        conversation_id = await ctx.get_or_create_conversation()
+
+        augmented_text = (
+            f"{synthetic_text}\n\n"
+            "[INSTRUCTIONS] The above are results from background agents you spawned. "
+            "Present the FULL findings to the user — include all details, data, links, "
+            "and comparisons the agents found. Do NOT summarize into a single sentence. "
+            "Format the response clearly."
+        )
+        await ctx.ingest(conversation_id, "user", augmented_text)
+
+        system_prompt = await build_system_prompt(app_state.config)
+        messages = await ctx.assemble(conversation_id, system_prompt)
+
+        model = app_state.config.get("models.default", "google/gemini-2.0-flash")
+        tool_schemas = app_state.tool_registry.get_schemas()
+        max_iterations = app_state.config.get("agent.max_tool_iterations", 20)
+
+        response_text = await run_tool_loop(
+            client=app_state.router_client,
+            messages=messages,
+            model=model,
+            tools=tool_schemas,
+            tool_registry=app_state.tool_registry,
+            max_iterations=max_iterations,
+            executor=app_state.executor,
+        )
+
+        await ctx.ingest(conversation_id, "assistant", response_text)
+        await backend.send_text(response_text)
+
+    except Exception:
+        logger.exception("Failed to handle agent callback")
+        try:
+            await backend.send_text(
+                "Agent results received but I failed to process them. "
+                "Use /search to find the raw results."
+            )
+        except Exception:
+            logger.exception("Failed to send agent callback error")
