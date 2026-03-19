@@ -20,9 +20,11 @@ def _reset_agents():
     """Clear the global _agents dict and rate-limiter before each test."""
     subagent_mod._agents.clear()
     subagent_mod._last_spawn_time = 0
+    subagent_mod._last_group_id = None
     yield
     subagent_mod._agents.clear()
     subagent_mod._last_spawn_time = 0
+    subagent_mod._last_group_id = None
 
 
 def _make_app_state() -> MagicMock:
@@ -345,3 +347,66 @@ async def test_list_agents_includes_usage():
     agent_info = result["agents"][0]
     assert "usage" in agent_info, "list_agents output must include 'usage' field"
     assert agent_info["usage"]["total_tokens"] == 280
+
+
+# ---------------------------------------------------------------------------
+# Batch-based grouping (explicit group_id replaces timing heuristic)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_explicit_group_id_used_when_provided():
+    """When group_id is passed explicitly, it is used instead of auto-grouping."""
+    app_state = _make_app_state()
+
+    with patch.object(subagent_mod, "_run_agent", side_effect=_noop_run_agent):
+        await subagent_mod._handle_spawn(
+            app_state, name="a1", prompt="task1", group_id="batch-42"
+        )
+        await subagent_mod._handle_spawn(
+            app_state, name="a2", prompt="task2", group_id="batch-42"
+        )
+
+    agents = list(subagent_mod._agents.values())
+    assert len(agents) == 2
+    assert agents[0]["group_id"] == "batch-42"
+    assert agents[1]["group_id"] == "batch-42"
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_different_group_ids_not_merged():
+    """Agents with different explicit group_ids stay in separate groups."""
+    app_state = _make_app_state()
+
+    with patch.object(subagent_mod, "_run_agent", side_effect=_noop_run_agent):
+        await subagent_mod._handle_spawn(
+            app_state, name="a1", prompt="task1", group_id="batch-1"
+        )
+        await subagent_mod._handle_spawn(
+            app_state, name="a2", prompt="task2", group_id="batch-2"
+        )
+
+    agents = list(subagent_mod._agents.values())
+    assert agents[0]["group_id"] == "batch-1"
+    assert agents[1]["group_id"] == "batch-2"
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_no_timing_based_grouping():
+    """Spawns without explicit group_id should NOT auto-group by timing."""
+    app_state = _make_app_state()
+
+    with patch.object(subagent_mod, "_run_agent", side_effect=_noop_run_agent):
+        r1 = json.loads(
+            await subagent_mod._handle_spawn(app_state, name="a1", prompt="task1")
+        )
+        # Reset rate limit to allow second spawn
+        subagent_mod._last_spawn_time = 0
+        r2 = json.loads(
+            await subagent_mod._handle_spawn(app_state, name="a2", prompt="task2")
+        )
+
+    # Each spawn without group_id should get its own unique group_id
+    assert r1["group_id"] != r2["group_id"]
+    await asyncio.sleep(0)

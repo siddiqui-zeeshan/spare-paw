@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING, Any
 
@@ -86,6 +87,12 @@ async def run_tool_loop(
         # Append the assistant message (with tool_calls) to the conversation
         messages.append(assistant_message)
 
+        # Generate a shared group_id for all spawn_agent calls in this batch
+        _has_spawn = any(
+            tc["function"]["name"] == "spawn_agent" for tc in tool_calls
+        )
+        batch_group_id = uuid.uuid4().hex[:8] if _has_spawn else None
+
         # Execute each tool call, deferring stop signals until all are done
         stop_reply: str | None = None
         for tool_call in tool_calls:
@@ -105,6 +112,10 @@ async def run_tool_loop(
                     name,
                     raw_args,
                 )
+
+            # Inject batch group_id into spawn_agent calls
+            if name == "spawn_agent" and batch_group_id is not None:
+                args["group_id"] = batch_group_id
 
             # Execute the tool, catching any exception
             try:

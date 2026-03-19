@@ -291,3 +291,180 @@ class TestRunToolLoop:
         assert len(tool_results) == 1
         assert "Error executing tool fail_tool" in tool_results[0]["content"]
         assert "boom" in tool_results[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_spawn_agent_calls_in_same_batch_share_group_id(self):
+        """Multiple spawn_agent calls in one model response get the same group_id."""
+        # Model returns two spawn_agent calls in one response, then text
+        batch_response = {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_a",
+                            "type": "function",
+                            "function": {
+                                "name": "spawn_agent",
+                                "arguments": json.dumps({"name": "r1", "prompt": "research"}),
+                            },
+                        },
+                        {
+                            "id": "call_b",
+                            "type": "function",
+                            "function": {
+                                "name": "spawn_agent",
+                                "arguments": json.dumps({"name": "r2", "prompt": "analyze"}),
+                            },
+                        },
+                    ],
+                }
+            }]
+        }
+
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=batch_response)
+
+        # Capture the args passed to execute to verify group_id injection
+        captured_args: list[dict] = []
+
+        async def _capture_execute(name, arguments, executor=None):
+            captured_args.append({"name": name, "args": arguments})
+            return json.dumps({"__stop_turn__": True, "reply": "spawned"})
+
+        mock_registry = AsyncMock()
+        mock_registry.execute = AsyncMock(side_effect=_capture_execute)
+
+        await run_tool_loop(
+            client=mock_client,
+            messages=[{"role": "user", "content": "research two topics"}],
+            model="m",
+            tools=[{"type": "function", "function": {"name": "spawn_agent"}}],
+            tool_registry=mock_registry,
+        )
+
+        # Both spawn_agent calls should have been given a group_id
+        spawn_calls = [c for c in captured_args if c["name"] == "spawn_agent"]
+        assert len(spawn_calls) == 2
+        assert "group_id" in spawn_calls[0]["args"], "spawn_agent should receive group_id"
+        assert "group_id" in spawn_calls[1]["args"], "spawn_agent should receive group_id"
+        # And they should share the SAME group_id
+        assert spawn_calls[0]["args"]["group_id"] == spawn_calls[1]["args"]["group_id"]
+
+    @pytest.mark.asyncio
+    async def test_non_spawn_tools_not_injected_with_group_id(self):
+        """Non-spawn_agent tools should NOT get a group_id injected."""
+        batch_response = {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_a",
+                            "type": "function",
+                            "function": {
+                                "name": "shell",
+                                "arguments": json.dumps({"command": "ls"}),
+                            },
+                        },
+                    ],
+                }
+            }]
+        }
+
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(
+            side_effect=[batch_response, _text_response("done")]
+        )
+
+        captured_args: list[dict] = []
+
+        async def _capture_execute(name, arguments, executor=None):
+            captured_args.append({"name": name, "args": arguments})
+            return "file_list"
+
+        mock_registry = AsyncMock()
+        mock_registry.execute = AsyncMock(side_effect=_capture_execute)
+
+        await run_tool_loop(
+            client=mock_client,
+            messages=[{"role": "user", "content": "list files"}],
+            model="m",
+            tools=[{"type": "function", "function": {"name": "shell"}}],
+            tool_registry=mock_registry,
+        )
+
+        assert len(captured_args) == 1
+        assert "group_id" not in captured_args[0]["args"]
+
+    @pytest.mark.asyncio
+    async def test_spawn_calls_in_different_batches_get_different_group_ids(self):
+        """spawn_agent calls in separate model responses get different group_ids."""
+        # First response: one spawn_agent call (returns stop_turn)
+        # We need two separate iterations that each have a spawn_agent
+        # But __stop_turn__ ends the loop. So we test via two separate
+        # run_tool_loop invocations simulating two user turns.
+
+        captured_args: list[dict] = []
+
+        async def _capture_execute(name, arguments, executor=None):
+            captured_args.append({"name": name, "args": arguments})
+            return json.dumps({"__stop_turn__": True, "reply": "spawned"})
+
+        # First turn
+        mock_client_1 = AsyncMock()
+        mock_client_1.chat = AsyncMock(return_value={
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "spawn_agent",
+                            "arguments": json.dumps({"name": "a1", "prompt": "t1"}),
+                        },
+                    }],
+                }
+            }]
+        })
+        mock_registry = AsyncMock()
+        mock_registry.execute = AsyncMock(side_effect=_capture_execute)
+
+        await run_tool_loop(
+            client=mock_client_1, messages=[], model="m",
+            tools=[], tool_registry=mock_registry,
+        )
+
+        # Second turn
+        mock_client_2 = AsyncMock()
+        mock_client_2.chat = AsyncMock(return_value={
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": "call_2",
+                        "type": "function",
+                        "function": {
+                            "name": "spawn_agent",
+                            "arguments": json.dumps({"name": "a2", "prompt": "t2"}),
+                        },
+                    }],
+                }
+            }]
+        })
+        mock_registry_2 = AsyncMock()
+        mock_registry_2.execute = AsyncMock(side_effect=_capture_execute)
+
+        await run_tool_loop(
+            client=mock_client_2, messages=[], model="m",
+            tools=[], tool_registry=mock_registry_2,
+        )
+
+        spawn_calls = [c for c in captured_args if c["name"] == "spawn_agent"]
+        assert len(spawn_calls) == 2
+        assert spawn_calls[0]["args"]["group_id"] != spawn_calls[1]["args"]["group_id"]

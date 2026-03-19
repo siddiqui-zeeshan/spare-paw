@@ -211,10 +211,6 @@ async def _handle_spawn(
     now = time.monotonic()
     elapsed = now - _last_spawn_time
 
-    # Auto-group: spawns within 5 seconds of each other share a group
-    if elapsed < 5 and _last_group_id is not None and group_id is None:
-        group_id = _last_group_id
-
     # Rate limit: max 1 spawn per 30 seconds (skip if part of a group batch)
     if elapsed < 30 and group_id is None:
         return json.dumps({
