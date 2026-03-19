@@ -158,6 +158,55 @@ Each server is launched as a subprocess using stdio transport. The `/mcp` Telegr
 
 MCP support requires `mcp>=1.26.0`, included in the package dependencies.
 
+## GitHub Integration
+
+The bot can interact with GitHub autonomously using the `gh` CLI through its existing shell tool -- no MCP server or Node.js dependency required.
+
+### Setup
+
+1. Install `gh` CLI on Termux: `pkg install gh`
+2. Create a fine-grained PAT on GitHub with the scopes you need (repo contents, issues, PRs)
+3. Authenticate: `echo "<token>" | gh auth login --with-token`
+4. Wire up git credentials: `gh auth setup-git`
+
+That's it. The bot picks up `gh` like any other shell command.
+
+### What the bot can do
+
+- **Browse repos** -- list issues, PRs, and repo metadata via `gh issue list`, `gh pr list`, etc.
+- **End-to-end code changes** -- clone a repo, create a feature branch, make edits, commit, push, and open a PR, all from a single Telegram message
+- **Review PRs** -- fetch the branch, read the diff, cross-check against the codebase, and leave review comments via `gh pr review`
+- **Background agents for heavy tasks** -- spawns a `coder` subagent for complex work like PR reviews so the main Telegram loop stays responsive
+- **Persistent memory** -- the git auth workflow is remembered across sessions via the DAG-based context system, so setup is a one-time step
+
+### Example prompts
+
+```
+List open issues on siddiqui-zeeshan/spare-paw
+Fix issue #11 in our repo — it's about adding a dependency lockfile
+Review PR #13 and leave comments
+```
+
+### Real example: autonomous issue fix + PR review
+
+When asked to fix a known issue ("no dependency lockfile"), the bot autonomously:
+
+1. Installed `gh` CLI on its own (`pkg install gh`)
+2. Listed issues via `gh issue list`
+3. Cloned the repo and created branch `fix/add-dependency-lockfile`
+4. Read `pyproject.toml`, ran `pip-compile` to generate `requirements.txt`
+5. Committed, pushed, and created [PR #13](https://github.com/siddiqui-zeeshan/spare-paw/pull/13)
+6. Then when asked to review its own PR, spawned a background agent that:
+   - Fetched the PR branch and read the lockfile
+   - Cross-checked Python imports across the codebase against the lockfile
+   - Left a review comment: *"Looks good. One minor observation: ensure pytest and pytest-asyncio are included if you intend to run tests in the CI pipeline."*
+
+All from two Telegram messages. No human intervention after the initial prompt.
+
+### Why not MCP?
+
+The official GitHub MCP server works (`npx @modelcontextprotocol/server-github`), but it pulls in Node.js and adds startup latency. Since `gh` CLI covers the same surface area and is already available as a shell command, there's nothing extra to configure or run.
+
 ## Architecture
 
 ```
