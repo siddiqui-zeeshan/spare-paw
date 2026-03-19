@@ -19,6 +19,7 @@ from telegram.ext import Application
 
 from spare_paw.config import Config, config
 from spare_paw.db import close_db, init_db
+from spare_paw.util.redact import redact_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,13 @@ class AppState:
 app_state: AppState | None = None
 
 
+class _RedactingFormatter(logging.Formatter):
+    """Logging formatter that redacts secrets from every log message."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_secrets(super().format(record))
+
+
 def _setup_logging() -> None:
     """Configure rotating file + stderr logging."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -60,6 +68,11 @@ def _setup_logging() -> None:
     # Clear existing handlers to avoid duplicates on reload
     root_logger.handlers.clear()
 
+    formatter = _RedactingFormatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
     # Rotating file handler
     file_handler = RotatingFileHandler(
         LOG_DIR / "spare-paw.log",
@@ -68,17 +81,13 @@ def _setup_logging() -> None:
         encoding="utf-8",
     )
     file_handler.setLevel(level)
-    file_formatter = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    file_handler.setFormatter(file_formatter)
+    file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
 
     # Stderr handler
     stderr_handler = logging.StreamHandler()
     stderr_handler.setLevel(level)
-    stderr_handler.setFormatter(file_formatter)
+    stderr_handler.setFormatter(formatter)
     root_logger.addHandler(stderr_handler)
 
 
