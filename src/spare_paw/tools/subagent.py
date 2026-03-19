@@ -141,8 +141,8 @@ async def _run_agent(
         else:
             tool_schemas = all_schemas
 
-        # Agents cannot spawn other agents
-        _agent_tools = {"spawn_agent", "list_agents"}
+        # Agents cannot spawn other agents or message the user directly
+        _agent_tools = {"spawn_agent", "list_agents", "send_message", "send_file"}
         tool_schemas = [
             s for s in tool_schemas
             if s.get("function", {}).get("name") not in _agent_tools

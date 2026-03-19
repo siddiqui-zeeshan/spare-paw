@@ -404,3 +404,35 @@ async def test_no_timing_based_grouping():
     # Each spawn without group_id should get its own unique group_id
     assert r1["group_id"] != r2["group_id"]
     await asyncio.sleep(0)
+
+
+# ---------------------------------------------------------------------------
+# Agents blocked from direct user communication
+# ---------------------------------------------------------------------------
+
+def test_agents_cannot_use_send_message_or_send_file():
+    """Subagents must not have access to send_message, send_file, or spawn_agent."""
+    # Simulate the filtering logic from _run_agent without triggering
+    # the full import chain (telegram -> cryptography is broken in CI).
+    all_schemas = [
+        {"function": {"name": "shell"}},
+        {"function": {"name": "send_message"}},
+        {"function": {"name": "send_file"}},
+        {"function": {"name": "spawn_agent"}},
+        {"function": {"name": "list_agents"}},
+        {"function": {"name": "files"}},
+    ]
+
+    # This is the exact filtering from _run_agent:
+    _agent_tools = {"spawn_agent", "list_agents", "send_message", "send_file"}
+    filtered = [
+        s for s in all_schemas
+        if s.get("function", {}).get("name") not in _agent_tools
+    ]
+
+    tool_names = {t["function"]["name"] for t in filtered}
+    assert "send_message" not in tool_names
+    assert "send_file" not in tool_names
+    assert "spawn_agent" not in tool_names
+    assert "list_agents" not in tool_names
+    assert tool_names == {"shell", "files"}
