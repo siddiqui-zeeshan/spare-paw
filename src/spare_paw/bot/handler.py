@@ -495,6 +495,8 @@ def _md_to_html(text: str) -> str:
     def _save_code_block(m: re.Match) -> str:
         lang = m.group(1)
         code = m.group(2).rstrip("\n")
+        # Escape HTML entities inside code blocks
+        code = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         idx = len(code_blocks)
         if lang:
             code_blocks.append(

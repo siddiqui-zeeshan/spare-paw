@@ -93,3 +93,11 @@ class TestMdToHtml:
         result = _md_to_html(md)
         assert "foo" in result
         assert "42" in result
+
+    def test_code_block_escapes_html_chars(self):
+        """< and > inside code blocks must be escaped for Telegram HTML."""
+        md = "```python\nif n <= 0:\n    return n > 1\n```"
+        result = _md_to_html(md)
+        assert "&lt;" in result
+        assert "&gt;" in result
+        assert "<=" not in result.replace("&lt;=", "")
