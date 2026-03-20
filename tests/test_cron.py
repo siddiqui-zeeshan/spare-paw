@@ -30,6 +30,7 @@ def _make_app_state(**overrides) -> MagicMock:
     app_state.executor = None
     app_state.application = MagicMock()
     app_state.application.bot = AsyncMock()
+    app_state.backend = AsyncMock()
     return app_state
 
 
@@ -149,12 +150,10 @@ class TestExecuteCronSuccess:
         # Tool loop was called
         mock_tool_loop.assert_awaited_once()
 
-        # Bot sent a message to the owner
-        bot = app_state.application.bot
-        bot.send_message.assert_awaited_once()
-        call_kwargs = bot.send_message.call_args[1]
-        assert call_kwargs["chat_id"] == 12345
-        assert "Cron result text" in call_kwargs["text"]
+        # Backend sent the result
+        app_state.backend.send_text.assert_awaited_once()
+        sent_text = app_state.backend.send_text.call_args[0][0]
+        assert "Cron result text" in sent_text
 
         # DB was updated with the result
         mock_update.assert_awaited_once()
@@ -183,13 +182,11 @@ class TestExecuteCronError:
 
         await execute_cron(app_state, "cron-err", "broken prompt", None, None)
 
-        # Bot sent a warning message
-        bot = app_state.application.bot
-        bot.send_message.assert_awaited_once()
-        call_kwargs = bot.send_message.call_args[1]
-        assert call_kwargs["chat_id"] == 12345
-        assert "cron-err" in call_kwargs["text"]
-        assert "failed" in call_kwargs["text"].lower() or "RuntimeError" in call_kwargs["text"]
+        # Backend sent a warning message
+        app_state.backend.send_text.assert_awaited_once()
+        sent_text = app_state.backend.send_text.call_args[0][0]
+        assert "cron-err" in sent_text
+        assert "failed" in sent_text.lower() or "RuntimeError" in sent_text
 
         # DB was updated with the error
         mock_update.assert_awaited_once()
@@ -210,8 +207,8 @@ class TestExecuteCronError:
 
         mock_tool_loop.side_effect = RuntimeError("model down")
         app_state = _make_app_state()
-        # Make the bot raise when trying to send the warning
-        app_state.application.bot.send_message = AsyncMock(
+        # Make the backend raise when trying to send the warning
+        app_state.backend.send_text = AsyncMock(
             side_effect=Exception("Telegram down")
         )
 
