@@ -281,12 +281,10 @@ async def _handle_tool_create(
     script_path.write_text(script, encoding="utf-8")
     script_path.chmod(script_path.stat().st_mode | stat.S_IEXEC)
 
-    # Notify owner via Telegram
+    # Notify owner via backend
     try:
-        owner_id = app_state.config.get("telegram.owner_id")
-        if owner_id and app_state.application:
-            bot = app_state.application.bot
-
+        backend = getattr(app_state, "backend", None)
+        if backend is not None:
             # Format parameters for display
             params_display = "(none)"
             if parameters and parameters.get("properties"):
@@ -309,19 +307,14 @@ async def _handle_tool_create(
                 f"Script:\n```\n{script_display}\n```"
             )
 
-            # Telegram has a 4096 char limit
             if len(msg) > 4096:
                 msg = msg[:4090] + "\n..."
 
-            # Send with inline approve/reject buttons
-            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-            keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("Approve", callback_data=f"approve:{name}"),
-                    InlineKeyboardButton("Reject", callback_data=f"reject:{name}"),
-                ]
-            ])
-            await bot.send_message(chat_id=owner_id, text=msg, reply_markup=keyboard)
+            actions = [
+                {"label": "Approve", "callback_data": f"approve:{name}"},
+                {"label": "Reject", "callback_data": f"reject:{name}"},
+            ]
+            await backend.send_notification(msg, actions=actions)
     except Exception:  # noqa: BLE001
         logger.exception("Failed to send tool approval request to owner")
 

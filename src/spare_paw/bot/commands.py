@@ -15,16 +15,21 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import resource
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
 
-from spare_paw.db import DB_PATH, get_db
+from spare_paw.core.commands import (
+    cmd_config_reset,
+    cmd_config_show,
+    cmd_forget,
+    cmd_model,
+    cmd_search,
+    cmd_status,
+)
+from spare_paw.db import get_db
 
 if TYPE_CHECKING:
     from telegram.ext import Application
@@ -266,67 +271,22 @@ async def _config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     subcommand = args[0].lower()
 
     if subcommand == "show":
-        await _config_show(update, app_state)
+        result = await cmd_config_show(app_state)
+        await update.message.reply_text(result)
     elif subcommand == "model":
         if len(args) < 2:
             await update.message.reply_text("Usage: /config model <model_name>")
             return
-        await _config_model(update, app_state, args[1])
+        result = await cmd_model(app_state, args[1])
+        await update.message.reply_text(result)
     elif subcommand == "reset":
-        await _config_reset(update, app_state)
+        result = await cmd_config_reset(app_state)
+        await update.message.reply_text(result)
     else:
         await update.message.reply_text(
             f"Unknown subcommand: {subcommand}\n"
             "Usage: /config <show|model|reset>"
         )
-
-
-async def _config_show(update: Update, app_state: Any) -> None:
-    """Show current model configuration and runtime overrides."""
-    cfg = app_state.config
-    default_model = cfg.get("models.default", "(not set)")
-    smart_model = cfg.get("models.smart", "(not set)")
-    cron_model = cfg.get("models.cron_default", "(not set)")
-
-    overrides = cfg._overrides  # noqa: SLF001
-    override_text = "(none)"
-    if overrides:
-        override_lines = []
-        _flatten_overrides(overrides, "", override_lines)
-        override_text = "\n".join(f"  {k} = {v}" for k, v in override_lines)
-
-    text = (
-        f"Models:\n"
-        f"  default: {default_model}\n"
-        f"  smart: {smart_model}\n"
-        f"  cron_default: {cron_model}\n\n"
-        f"Runtime overrides:\n{override_text}"
-    )
-    await update.message.reply_text(text)
-
-
-def _flatten_overrides(
-    d: dict, prefix: str, out: list[tuple[str, Any]]
-) -> None:
-    """Flatten a nested dict into dot-separated key/value pairs."""
-    for k, v in d.items():
-        key = f"{prefix}{k}" if not prefix else f"{prefix}.{k}"
-        if isinstance(v, dict):
-            _flatten_overrides(v, key, out)
-        else:
-            out.append((key, v))
-
-
-async def _config_model(update: Update, app_state: Any, model_name: str) -> None:
-    """Set a runtime model override."""
-    app_state.config.set_override("models.default", model_name)
-    await update.message.reply_text(f"Default model set to: {model_name}")
-
-
-async def _config_reset(update: Update, app_state: Any) -> None:
-    """Clear all runtime overrides."""
-    app_state.config.reset_overrides()
-    await update.message.reply_text("Runtime overrides cleared. Using config.yaml defaults.")
 
 
 # ---------------------------------------------------------------------------
@@ -339,64 +299,8 @@ async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not _is_owner(update, app_state):
         return
 
-    now = datetime.now(timezone.utc)
-    uptime = now - app_state.start_time
-    uptime_str = _format_timedelta(uptime)
-
-    # Memory usage via resource module (portable, no psutil needed)
-    usage = resource.getrusage(resource.RUSAGE_SELF)
-    # ru_maxrss is in kilobytes on Linux, bytes on macOS
-    rss_kb = usage.ru_maxrss
-    if os.uname().sysname == "Darwin":
-        rss_kb = rss_kb // 1024  # macOS reports bytes
-    rss_mb = rss_kb / 1024
-
-    # DB file size
-    db_size_str = "(not found)"
-    if DB_PATH.exists():
-        db_bytes = DB_PATH.stat().st_size
-        if db_bytes < 1024 * 1024:
-            db_size_str = f"{db_bytes / 1024:.1f} KB"
-        else:
-            db_size_str = f"{db_bytes / (1024 * 1024):.1f} MB"
-
-    # Active cron count
-    db = await get_db()
-    async with db.execute(
-        "SELECT COUNT(*) as cnt FROM cron_jobs WHERE enabled = 1"
-    ) as cursor:
-        row = await cursor.fetchone()
-    active_crons = row["cnt"] if row else 0
-
-    # Current model
-    current_model = app_state.config.get("models.default", "(not set)")
-
-    text = (
-        f"Uptime: {uptime_str}\n"
-        f"Memory (RSS): {rss_mb:.1f} MB\n"
-        f"Database: {db_size_str}\n"
-        f"Active crons: {active_crons}\n"
-        f"Current model: {current_model}"
-    )
-    await update.message.reply_text(text)
-
-
-def _format_timedelta(td) -> str:
-    """Format a timedelta as a human-readable string."""
-    total_seconds = int(td.total_seconds())
-    days, remainder = divmod(total_seconds, 86400)
-    hours, remainder = divmod(remainder, 3600)
-    minutes, seconds = divmod(remainder, 60)
-
-    parts: list[str] = []
-    if days:
-        parts.append(f"{days}d")
-    if hours:
-        parts.append(f"{hours}h")
-    if minutes:
-        parts.append(f"{minutes}m")
-    parts.append(f"{seconds}s")
-    return " ".join(parts)
+    result = await cmd_status(app_state)
+    await update.message.reply_text(result)
 
 
 # ---------------------------------------------------------------------------
@@ -410,36 +314,8 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     query = " ".join(context.args) if context.args else ""
-    if not query:
-        await update.message.reply_text("Usage: /search <query>")
-        return
-
-    from spare_paw import context as ctx_module
-
-    try:
-        results = await ctx_module.search(query)
-    except Exception as exc:
-        await update.message.reply_text(f"Search error: {exc}")
-        return
-
-    if not results:
-        await update.message.reply_text(f"No results for: {query}")
-        return
-
-    lines: list[str] = []
-    for r in results:
-        content_preview = r["content"][:120].replace("\n", " ")
-        lines.append(
-            f"[{r['role']}] {r['created_at'][:16]}\n  {content_preview}"
-        )
-
-    text = f"Search results for '{query}':\n\n" + "\n\n".join(lines)
-
-    # Respect Telegram message length limit
-    if len(text) > 4096:
-        text = text[:4090] + "\n..."
-
-    await update.message.reply_text(text)
+    result = await cmd_search(app_state, query)
+    await update.message.reply_text(result)
 
 
 # ---------------------------------------------------------------------------
@@ -452,12 +328,8 @@ async def _forget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not _is_owner(update, app_state):
         return
 
-    from spare_paw import context as ctx_module
-
-    await ctx_module.new_conversation()
-    await update.message.reply_text(
-        "New conversation started. (Previous history is preserved in DB.)"
-    )
+    result = await cmd_forget(app_state)
+    await update.message.reply_text(result)
 
 
 # ---------------------------------------------------------------------------
@@ -470,14 +342,9 @@ async def _model_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not _is_owner(update, app_state):
         return
 
-    if not context.args:
-        current = app_state.config.get("models.default", "(not set)")
-        await update.message.reply_text(f"Current model: {current}\nUsage: /model <name>")
-        return
-
-    model_name = context.args[0]
-    app_state.config.set_override("models.default", model_name)
-    await update.message.reply_text(f"Default model set to: {model_name}")
+    model_name = context.args[0] if context.args else None
+    result = await cmd_model(app_state, model_name)
+    await update.message.reply_text(result)
 
 
 # ---------------------------------------------------------------------------

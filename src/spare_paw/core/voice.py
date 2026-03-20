@@ -1,11 +1,14 @@
-"""Voice message transcription via Groq Whisper API."""
+"""Voice message transcription via Groq Whisper API.
+
+Accepts raw bytes — no Telegram dependency. The caller (bot handler or
+webhook handler) is responsible for downloading the audio file.
+"""
 
 from __future__ import annotations
 
 import logging
 
 import aiohttp
-from telegram import File as TelegramFile
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +20,12 @@ class VoiceTranscriptionError(Exception):
     """Raised when voice transcription fails."""
 
 
-async def transcribe(voice_file: TelegramFile, config: dict) -> str:
-    """Download a Telegram voice file and transcribe it via Groq Whisper.
+async def transcribe(voice_bytes: bytes, config: dict) -> str:
+    """Transcribe audio bytes via Groq Whisper.
 
     Args:
-        voice_file: A ``telegram.File`` object obtained from ``voice.get_file()``.
-        config: The full application config dict. Must contain ``groq.api_key``.
+        voice_bytes: Raw audio data (OGG, WAV, etc.).
+        config: Application config dict. Must contain ``groq.api_key``.
 
     Returns:
         The transcribed text.
@@ -37,10 +40,6 @@ async def transcribe(voice_file: TelegramFile, config: dict) -> str:
             "Voice messages require a Groq API key in config."
         )
 
-    # Download the voice file bytes from Telegram
-    voice_bytes = await voice_file.download_as_bytearray()
-
-    # Send to Groq Whisper for transcription
     headers = {"Authorization": f"Bearer {api_key}"}
 
     form = aiohttp.FormData()

@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from spare_paw.core.prompt import build_system_prompt
 from spare_paw.db import get_db
 from spare_paw.router.tool_loop import run_tool_loop
 
@@ -18,9 +19,6 @@ if TYPE_CHECKING:
     from spare_paw.gateway import AppState
 
 logger = logging.getLogger(__name__)
-
-# Telegram message length limit
-_TG_MAX_LENGTH = 4096
 
 
 async def execute_cron(
@@ -51,9 +49,7 @@ async def execute_cron(
         )
 
         # 2. Build system prompt (includes IDENTITY.md, USER.md, SYSTEM.md)
-        from spare_paw.bot.handler import _build_system_prompt
-
-        system_prompt = await _build_system_prompt(app_state.config)
+        system_prompt = await build_system_prompt(app_state.config)
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -100,11 +96,10 @@ async def execute_cron(
             executor=app_state.executor,
         )
 
-        # 6. Send result to owner via Telegram
-        owner_id = app_state.config.get("telegram.owner_id")
-        if owner_id and app_state.application:
-            bot = app_state.application.bot
-            await _send_chunked(bot, owner_id, result)
+        # 6. Send result to owner via backend
+        backend = getattr(app_state, "backend", None)
+        if backend is not None:
+            await backend.send_text(result)
 
         # 7. Update DB — success
         await _update_cron_result(cron_id, now, result=result)
@@ -116,12 +111,9 @@ async def execute_cron(
 
         # Send error notification to owner
         try:
-            owner_id = app_state.config.get("telegram.owner_id")
-            if owner_id and app_state.application:
-                bot = app_state.application.bot
-                await _send_chunked(
-                    bot,
-                    owner_id,
+            backend = getattr(app_state, "backend", None)
+            if backend is not None:
+                await backend.send_text(
                     f"\u26a0\ufe0f Cron {cron_id} failed:\n{error_msg}",
                 )
         except Exception:
@@ -133,29 +125,6 @@ async def execute_cron(
     finally:
         # Auto-delete one-shot crons regardless of success/failure
         await _maybe_delete_once(app_state, cron_id)
-
-
-async def _send_chunked(bot: Any, chat_id: int, text: str) -> None:
-    """Send a message to Telegram, splitting into chunks if it exceeds the limit."""
-    if len(text) <= _TG_MAX_LENGTH:
-        await bot.send_message(chat_id=chat_id, text=text)
-        return
-
-    # Split on newlines where possible, falling back to hard splits
-    remaining = text
-    while remaining:
-        if len(remaining) <= _TG_MAX_LENGTH:
-            await bot.send_message(chat_id=chat_id, text=remaining)
-            break
-
-        # Find the last newline within the limit
-        split_at = remaining.rfind("\n", 0, _TG_MAX_LENGTH)
-        if split_at == -1:
-            split_at = _TG_MAX_LENGTH
-
-        chunk = remaining[:split_at]
-        remaining = remaining[split_at:].lstrip("\n")
-        await bot.send_message(chat_id=chat_id, text=chunk)
 
 
 async def _update_cron_result(
