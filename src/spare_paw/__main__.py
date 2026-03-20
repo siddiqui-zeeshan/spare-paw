@@ -1,4 +1,4 @@
-"""Entry point for spare-paw: python -m spare_paw [setup|gateway]."""
+"""Entry point for spare-paw: python -m spare_paw [setup|gateway|chat]."""
 
 import sys
 
@@ -9,6 +9,7 @@ Usage: python -m spare_paw <command>
 Commands:
   setup     Run the interactive setup wizard
   gateway   Start the bot + scheduler (main loop)
+  chat      Start an interactive terminal session
 """
 
 
@@ -27,6 +28,10 @@ def main() -> None:
         from spare_paw.gateway import run
 
         run()
+    elif command == "chat":
+        from spare_paw.cli.entry import run_chat
+
+        run_chat()
     else:
         print(f"Unknown command: {command}\n")
         print(USAGE.strip())

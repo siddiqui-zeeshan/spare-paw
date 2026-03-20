@@ -7,7 +7,7 @@ import pytest_asyncio
 import aiosqlite
 
 import spare_paw.db as db_mod
-from spare_paw.context import ingest, assemble, search, get_or_create_conversation, new_conversation
+from spare_paw.context import ingest, assemble, search, recent, get_or_create_conversation, new_conversation
 
 
 @pytest_asyncio.fixture()
@@ -165,3 +165,73 @@ async def test_new_conversation_creates_fresh(_init_db):
     # get_or_create should return the newest one
     latest = await get_or_create_conversation()
     assert latest == conv_id2
+
+
+# ---------------------------------------------------------------------------
+# recent
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_recent_returns_last_n_messages(_init_db):
+    conv_id = await new_conversation()
+    await ingest(conv_id, "user", "hello")
+    await ingest(conv_id, "assistant", "hi there")
+    await ingest(conv_id, "user", "how are you")
+
+    msgs = await recent(conv_id, limit=2)
+
+    assert len(msgs) == 2
+    assert msgs[0]["role"] == "assistant"
+    assert msgs[0]["content"] == "hi there"
+    assert msgs[1]["role"] == "user"
+    assert msgs[1]["content"] == "how are you"
+
+
+@pytest.mark.asyncio
+async def test_recent_returns_chronological_order(_init_db):
+    conv_id = await new_conversation()
+    await ingest(conv_id, "user", "first")
+    await ingest(conv_id, "assistant", "second")
+    await ingest(conv_id, "user", "third")
+
+    msgs = await recent(conv_id, limit=10)
+
+    assert len(msgs) == 3
+    assert msgs[0]["content"] == "first"
+    assert msgs[1]["content"] == "second"
+    assert msgs[2]["content"] == "third"
+
+
+@pytest.mark.asyncio
+async def test_recent_includes_created_at(_init_db):
+    conv_id = await new_conversation()
+    await ingest(conv_id, "user", "hello")
+
+    msgs = await recent(conv_id, limit=5)
+
+    assert len(msgs) == 1
+    assert "created_at" in msgs[0]
+    assert msgs[0]["created_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_recent_empty_conversation(_init_db):
+    conv_id = await new_conversation()
+
+    msgs = await recent(conv_id, limit=10)
+
+    assert msgs == []
+
+
+@pytest.mark.asyncio
+async def test_recent_respects_conversation_boundary(_init_db):
+    conv1 = await new_conversation()
+    conv2 = await new_conversation()
+    await ingest(conv1, "user", "conv1 msg")
+    await ingest(conv2, "user", "conv2 msg")
+
+    msgs = await recent(conv1, limit=10)
+
+    assert len(msgs) == 1
+    assert msgs[0]["content"] == "conv1 msg"

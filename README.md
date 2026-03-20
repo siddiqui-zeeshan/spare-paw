@@ -103,7 +103,8 @@ A template is provided at `config.example.yaml`. Key sections:
 |---------|---------|
 | `backend` | `"telegram"` (default) or `"webhook"` |
 | `telegram` | Bot token and owner ID |
-| `webhook` | Port and optional secret for the HTTP webhook backend |
+| `webhook` | Port, optional secret, and `enabled` flag for the HTTP webhook backend |
+| `remote` | `url` and `secret` for `spare-paw chat` to reach a remote instance |
 | `openrouter` | OpenRouter API key |
 | `models` | Model slots: `default`, `smart`, `cron_default` |
 | `groq` | Groq API key for voice transcription |
@@ -161,6 +162,98 @@ curl "http://localhost:8080/poll?timeout=30" \
 ```
 
 The poll endpoint returns a JSON array of response messages and supports images and voice (base64-encoded in the request body).
+
+## CLI / TUI (`spare-paw chat`)
+
+`spare-paw chat` gives you a terminal interface to the same engine, without opening Telegram.
+
+### Install optional dependencies
+
+```bash
+pip install spare-paw[cli]   # rich (required for the CLI REPL)
+pip install spare-paw[tui]   # rich + textual (required for --tui)
+```
+
+### Modes
+
+| Invocation | Behaviour |
+|---|---|
+| `spare-paw chat` | Interactive REPL in the terminal |
+| `spare-paw chat --tui` | Full-screen Textual TUI (message log, input bar, keyboard shortcuts) |
+| `echo "question" \| spare-paw chat` | Pipe / non-interactive: reads stdin, prints reply, exits |
+
+### Remote client mode
+
+When `remote.url` is set in `~/.spare-paw/config.yaml`, `spare-paw chat` connects to a running spare-paw instance (e.g. the bot on your phone) via its webhook API instead of starting a local engine:
+
+```yaml
+remote:
+  url: "http://192.168.1.10:8080"
+  secret: "your-webhook-secret"   # matches webhook.secret on the server
+```
+
+The client health-checks the server on startup and exits with an error message if the server is unreachable.
+
+### Standalone local mode
+
+When `remote.url` is absent, `spare-paw chat` spins up a full local engine (same tools, context, models as the gateway). Useful for testing or when the phone isn't available.
+
+### TUI keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| `Ctrl+C` | Exit |
+| `Ctrl+L` | Clear log |
+| `Ctrl+N` | New conversation (`/forget`) |
+| `F1` | Help |
+
+### TUI visual features
+
+The `--tui` mode renders a polished full-screen interface:
+
+- **Streaming output** -- tokens appear as they arrive from the model, word by word
+- **Message timestamps** -- each user and bot message shows the time in HH:MM AM/PM format
+- **Full-width turn dividers** -- Rich Rule horizontal rules spanning the full terminal width separate conversation turns for readability
+- **Tool call panels** -- tool calls render in bordered panels instead of inline dim text
+- **Cat-themed thinking verbs** -- while waiting for the first token, a rotating cat-themed verb is shown (e.g. "Purring...", "Pawing...", "Whisker-twitching...", "Tail-flicking...") instead of a plain "Thinking..." indicator
+- **Conversation history on startup** -- the last 10 messages are loaded from the server when the TUI starts, so the chat continues seamlessly from where you left off
+- **Slash command autocomplete** -- typing `/` in the input bar shows a filtered list of available commands; press Tab or Enter to complete
+- **Status bar** -- bottom bar shows connection status with a colored dot, active model name, message count, and tool call count
+- **Styled input** -- input field has a prompt prefix for visual clarity
+
+### Tool call visibility
+
+In CLI mode, tool calls appear inline:
+
+```
+  > shell(command='ls -la')
+  > tavily_search(query='latest Python release')
+```
+
+In TUI mode (`--tui`), tool calls are rendered as distinct bordered panels within the message log.
+
+### Dual-backend: Telegram + webhook simultaneously
+
+The gateway can run Telegram and the webhook API at the same time. This lets `spare-paw chat --remote` coexist with the Telegram bot on the same instance:
+
+```yaml
+backend: "telegram"
+webhook:
+  enabled: true
+  port: 8080
+  secret: "your-secret-here"
+```
+
+The webhook API exposes `POST /message`, `GET /poll`, `GET /stream` (SSE), `GET /health`, and `GET /history`. The `/stream` endpoint delivers messages and tool events in real-time via Server-Sent Events.
+
+**Fetch conversation history:**
+
+```bash
+curl "http://localhost:8080/history?limit=20" \
+  -H "Authorization: Bearer your-secret-here"
+```
+
+Returns a JSON array of recent messages (newest last). `limit` defaults to 50.
 
 ## Telegram Commands
 
@@ -364,7 +457,7 @@ pytest
 
 ```
 src/spare_paw/
-  __main__.py        # Entry point: spare-paw setup / spare-paw gateway
+  __main__.py        # Entry point: spare-paw setup / spare-paw gateway / spare-paw chat
   backend.py         # MessageBackend protocol + IncomingMessage dataclass
   config.py          # Config loading
   db.py              # SQLite connection, schema, migrations
@@ -383,7 +476,15 @@ src/spare_paw/
     commands.py      # Telegram command wiring
     voice.py         # Voice message handling
   webhook/
-    backend.py       # WebhookBackend: HTTP server implementing MessageBackend
+    backend.py       # WebhookBackend: HTTP server (POST /message, GET /poll, GET /stream, GET /health)
+  cli/
+    entry.py         # spare-paw chat entry point (remote / local / pipe dispatch)
+    client.py        # RemoteClient: HTTP client for the webhook API (send, poll, stream)
+    backend.py       # CLIBackend: MessageBackend that prints to the terminal
+    repl.py          # Interactive REPL (remote and local variants)
+    pipe.py          # Pipe / non-interactive mode
+  tui/
+    app.py           # Textual TUI app (SparePawTUI) and TUIBackend
   router/
     openrouter.py    # OpenRouter API client
     tool_loop.py     # Tool-use execution loop
