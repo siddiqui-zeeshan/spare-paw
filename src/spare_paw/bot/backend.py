@@ -224,6 +224,7 @@ class TelegramBackend:
             BotCommand("search", "Full-text search over conversation history"),
             BotCommand("forget", "Start a new conversation"),
             BotCommand("model", "Switch the active model"),
+            BotCommand("plan", "Deep thinking: plan before executing"),
             BotCommand("mcp", "List connected MCP servers and tools"),
         ])
         await self._application.start()

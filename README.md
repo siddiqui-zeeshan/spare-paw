@@ -17,6 +17,7 @@ A 24/7 personal AI agent accessible through Telegram. Runs on macOS, Linux, Wind
 - **Sliding window context** -- token-budgeted context assembly with configurable window size and safety margin
 - **Message queue with backpressure** -- incoming messages queue while the bot is busy; typing indicator signals processing
 - **Heartbeat watchdog** -- detects event loop starvation and deadlocks, not just process crashes
+- **Deep thinking (`/plan`)** -- on-demand planning phase that decomposes complex requests into a structured execution plan before the tool loop runs. A single cheap LLM call (no tools) produces a step-by-step plan with tool/agent classification and parallelism hints; the plan is injected as context for the main model to follow. Regular messages skip planning entirely (zero overhead)
 - **Agent orchestration** -- spawn multiple subagents in a single turn; agents spawned in the same tool-call batch are deterministically grouped (via a shared batch group_id injected by the tool loop) and their results are delivered together as one synthesized response. Three predefined archetypes: `researcher` (web search + scraping), `coder` (shell + files), `analyst` (data analysis), each with preset tools and system prompt. Safety limits: max 3 concurrent agents, max 3 per group
 - **Token/cost tracking** -- per-agent token usage tracking (prompt, completion, total) from OpenRouter, visible via `list_agents`
 - **MCP client** -- connect to external MCP servers (GitHub, filesystem, etc.) and use their tools alongside native tools
@@ -262,6 +263,7 @@ Returns a JSON array of recent messages (newest last). `limit` defaults to 50.
 | `/search <query>` | Full-text search over conversation history |
 | `/forget` | Start a new conversation (history preserved in DB) |
 | `/model <name>` | Shortcut for `/config model <name>` |
+| `/plan <prompt>` | Deep thinking: plan before executing (decomposes into steps, then runs) |
 | `/mcp` | List connected MCP servers and their tools |
 
 ## Tools
@@ -392,6 +394,7 @@ Core Engine (core/engine.py)
   |  message processing, tool loop, agent orchestration
   |
   +-- core/prompt.py    system prompt assembly
+  +-- core/planner.py   deep thinking planning phase (/plan)
   +-- core/voice.py     Groq Whisper transcription
   +-- core/commands.py  slash command logic
   |
@@ -461,6 +464,7 @@ src/spare_paw/
     prompt.py        # System prompt builder
     voice.py         # Groq Whisper transcription
     commands.py      # Slash command logic
+    planner.py       # Deep thinking planning phase (/plan)
   bot/
     backend.py       # TelegramBackend: implements MessageBackend for Telegram
     handler.py       # Telegram update handler with queue
