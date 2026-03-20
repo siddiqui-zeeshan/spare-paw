@@ -286,19 +286,11 @@ async def _async_main() -> None:
         logger.error("No telegram.bot_token in config. Run 'python -m spare_paw setup' first.")
         return
 
-    from telegram.ext import Application
-
-    application = (
-        Application.builder()
-        .token(bot_token)
-        .build()
-    )
-
     owner_id = config.get("telegram.owner_id")
 
     from spare_paw.bot.backend import TelegramBackend
 
-    backend = TelegramBackend(application, chat_id=owner_id)
+    backend = TelegramBackend.create(bot_token, owner_id)
     app_state.backend = backend
     backend.set_app_state(app_state)
 
@@ -306,7 +298,7 @@ async def _async_main() -> None:
     try:
         from spare_paw.bot.handler import setup_handlers, start_queue_processor
 
-        setup_handlers(application)
+        setup_handlers(backend._application)
         logger.info("Bot handlers registered")
     except ImportError:
         start_queue_processor = None
@@ -342,7 +334,7 @@ async def _async_main() -> None:
 
     # 16. Start message queue processor (must be after initialize/start)
     if start_queue_processor is not None:
-        start_queue_processor(application)
+        start_queue_processor(backend._application)
 
     logger.info("Telegram bot started polling")
 

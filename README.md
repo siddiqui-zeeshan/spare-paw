@@ -236,10 +236,21 @@ After 100+ messages in a conversation, the bot had compressed history into 12 DA
 ## Architecture
 
 ```
-Telegram Bot (python-telegram-bot)
+MessageBackend (protocol)
+  |
+  +-- TelegramBackend (bot/backend.py)    <-- current implementation
+  |     python-telegram-bot, owner auth, photo/voice handling
   |
   v
-Context Manager (SQLite + FTS5 + DAG-based lossless context management with sliding window)
+Core Engine (core/engine.py)
+  |  message processing, tool loop, agent orchestration
+  |
+  +-- core/prompt.py    system prompt assembly
+  +-- core/voice.py     Groq Whisper transcription
+  +-- core/commands.py  slash command logic
+  |
+  v
+Context Manager (SQLite + FTS5 + DAG-based lossless context management)
   |
   v
 Model Router (OpenRouter API, semaphore-serialized, retry with backoff)
@@ -250,16 +261,11 @@ Tools (ProcessPoolExecutor: shell, files, web search, web scrape, cron, vision)
   |                          MCP Client (connects to external MCP servers)
   |
 Agent Orchestrator (spawn_agent -> parallel multi-agent spawning)
-  |                    \
-  |                     Batch-based grouping: the tool loop generates a shared
-  |                     group_id for all spawn_agent calls in the same model
-  |                     response; turn stop is deferred until all spawns complete.
-  |                     Group callback: results flow back via a queue callback,
-  |                     synthesized into one coherent response by the main LLM.
-  |                     Results stored in conversation memory for follow-ups
   |
 Cron Scheduler (APScheduler, SQLite-persisted, semaphore-gated)
 ```
+
+The core engine is decoupled from Telegram via the `MessageBackend` protocol (`backend.py`). `TelegramBackend` in `bot/backend.py` is the current implementation; additional backends (webhook, Discord, etc.) can be added by implementing `MessageBackend` and `IncomingMessage`. `gateway.py` interacts with the backend through `AppState.backend` rather than directly with the Telegram `Application`.
 
 Key design points:
 
@@ -296,15 +302,22 @@ pytest
 ```
 src/spare_paw/
   __main__.py        # Entry point: setup / gateway
+  backend.py         # MessageBackend protocol + IncomingMessage dataclass
   config.py          # Config loading
   db.py              # SQLite connection, schema, migrations
   context.py         # Sliding window context + FTS5 search
-  gateway.py         # Main async loop
+  gateway.py         # Main async loop (uses AppState.backend)
   setup_wizard.py    # Interactive onboarding
-  bot/
-    handler.py       # Message handler with queue
-    commands.py      # Telegram commands
+  core/
+    engine.py        # Message processing and tool loop (backend-agnostic)
+    prompt.py        # System prompt builder
     voice.py         # Groq Whisper transcription
+    commands.py      # Slash command logic
+  bot/
+    backend.py       # TelegramBackend: implements MessageBackend for Telegram
+    handler.py       # Telegram update handler with queue
+    commands.py      # Telegram command wiring
+    voice.py         # Voice message handling
   router/
     openrouter.py    # OpenRouter API client
     tool_loop.py     # Tool-use execution loop

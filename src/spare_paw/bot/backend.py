@@ -130,6 +130,18 @@ class TelegramBackend:
         self._application = application
         self._chat_id = chat_id
 
+    @classmethod
+    def create(cls, bot_token: str, owner_id: int) -> "TelegramBackend":
+        """Build a TelegramBackend from a bot token and owner ID.
+
+        Creates the python-telegram-bot Application internally so the
+        caller doesn't need to import telegram.
+        """
+        from telegram.ext import Application
+
+        application = Application.builder().token(bot_token).build()
+        return cls(application, chat_id=owner_id)
+
     @property
     def bot(self) -> Any:
         return self._application.bot
