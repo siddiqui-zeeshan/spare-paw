@@ -11,6 +11,8 @@ import pytest
 
 from spare_paw.webhook.backend import WebhookBackend, _current_session
 
+pytestmark = pytest.mark.slow
+
 SECRET = "integration-secret"
 
 # Port range: 18940–18960 (avoid collision with other test files)

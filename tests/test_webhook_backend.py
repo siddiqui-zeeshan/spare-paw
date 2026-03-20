@@ -11,6 +11,8 @@ import pytest
 from spare_paw.backend import MessageBackend
 from spare_paw.webhook.backend import WebhookBackend, _SESSION_TTL, _current_session
 
+pytestmark = pytest.mark.slow
+
 SECRET = "test-secret"
 
 
