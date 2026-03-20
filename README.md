@@ -163,23 +163,21 @@ curl "http://localhost:8080/poll?timeout=30" \
 
 The poll endpoint returns a JSON array of response messages and supports images and voice (base64-encoded in the request body).
 
-## CLI / TUI (`spare-paw chat`)
+## TUI (`spare-paw chat`)
 
-`spare-paw chat` gives you a terminal interface to the same engine, without opening Telegram.
+`spare-paw chat` gives you a full-screen terminal interface to the same engine, without opening Telegram.
 
 ### Install optional dependencies
 
 ```bash
-pip install spare-paw[cli]   # rich (required for the CLI REPL)
-pip install spare-paw[tui]   # rich + textual (required for --tui)
+pip install spare-paw[tui]   # rich + textual
 ```
 
 ### Modes
 
 | Invocation | Behaviour |
 |---|---|
-| `spare-paw chat` | Interactive REPL in the terminal |
-| `spare-paw chat --tui` | Full-screen Textual TUI (message log, input bar, keyboard shortcuts) |
+| `spare-paw chat` | Full-screen Textual TUI (message log, input bar, keyboard shortcuts) |
 | `echo "question" \| spare-paw chat` | Pipe / non-interactive: reads stdin, prints reply, exits |
 
 ### Remote client mode
@@ -209,7 +207,7 @@ When `remote.url` is absent, `spare-paw chat` spins up a full local engine (same
 
 ### TUI visual features
 
-The `--tui` mode renders a polished full-screen interface:
+The TUI renders a polished full-screen interface:
 
 - **Streaming output** -- tokens appear as they arrive from the model, word by word
 - **Message timestamps** -- each user and bot message shows the time in HH:MM AM/PM format
@@ -223,18 +221,11 @@ The `--tui` mode renders a polished full-screen interface:
 
 ### Tool call visibility
 
-In CLI mode, tool calls appear inline:
-
-```
-  > shell(command='ls -la')
-  > tavily_search(query='latest Python release')
-```
-
-In TUI mode (`--tui`), tool calls are rendered as distinct bordered panels within the message log.
+Tool calls are rendered as translucent bordered panels that appear while the model is working and disappear once the response arrives.
 
 ### Dual-backend: Telegram + webhook simultaneously
 
-The gateway can run Telegram and the webhook API at the same time. This lets `spare-paw chat --remote` coexist with the Telegram bot on the same instance:
+The gateway can run Telegram and the webhook API at the same time. This lets `spare-paw chat` coexist with the Telegram bot on the same instance:
 
 ```yaml
 backend: "telegram"
@@ -479,9 +470,7 @@ src/spare_paw/
     backend.py       # WebhookBackend: HTTP server (POST /message, GET /poll, GET /stream, GET /health)
   cli/
     entry.py         # spare-paw chat entry point (remote / local / pipe dispatch)
-    client.py        # RemoteClient: HTTP client for the webhook API (send, poll, stream)
-    backend.py       # CLIBackend: MessageBackend that prints to the terminal
-    repl.py          # Interactive REPL (remote and local variants)
+    client.py        # RemoteClient: HTTP client for the webhook API (send, poll, stream, history)
     pipe.py          # Pipe / non-interactive mode
   tui/
     app.py           # Textual TUI app (SparePawTUI) and TUIBackend
