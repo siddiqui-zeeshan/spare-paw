@@ -8,6 +8,7 @@ Commands:
     /forget                             — start a new conversation
     /model <name>                       — shortcut for /config model
     /approve <name>                     — approve a pending custom tool
+    /plan <prompt>                      — deep thinking: plan before executing
     /mcp                                — list connected MCP servers
 """
 
@@ -519,6 +520,28 @@ async def _mcp_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 # ---------------------------------------------------------------------------
+# /plan — deep thinking: plan before executing
+# ---------------------------------------------------------------------------
+
+async def _plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /plan <prompt> — plan then execute."""
+    app_state = _get_app_state(context)
+    if not _is_owner(update, app_state):
+        return
+
+    prompt = " ".join(context.args) if context.args else ""
+    if not prompt:
+        await update.message.reply_text("Usage: /plan <prompt>")
+        return
+
+    from spare_paw.backend import IncomingMessage
+    from spare_paw.core.engine import enqueue
+
+    msg = IncomingMessage(text=prompt, plan=True)
+    await enqueue(msg)
+
+
+# ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 
@@ -535,3 +558,4 @@ def register_commands(application: "Application") -> None:
     application.add_handler(CommandHandler("agents", _agents_handler))
     application.add_handler(CommandHandler("logs", _logs_handler))
     application.add_handler(CommandHandler("mcp", _mcp_handler))
+    application.add_handler(CommandHandler("plan", _plan_handler))

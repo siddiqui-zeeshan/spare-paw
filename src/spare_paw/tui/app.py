@@ -455,12 +455,21 @@ if HAS_TEXTUAL:
                         await self._send_local_image(fpath.read_bytes(), caption)
                     return
 
+            # /plan prefix — deep thinking mode
+            plan_mode = False
+            if text.lower().startswith("/plan "):
+                plan_mode = True
+                text = text[6:].strip()
+                if not text:
+                    log_widget.write("[dim]Usage: /plan <prompt>[/dim]")
+                    return
+
             self._show_thinking()
 
             if self._client:
                 self._current_task = asyncio.create_task(self._send_remote(text))
             else:
-                await self._send_local(text)
+                await self._send_local(text, plan=plan_mode)
 
         async def _send_remote(self, text: str, image_b64: str | None = None) -> None:
             try:
@@ -560,11 +569,11 @@ if HAS_TEXTUAL:
             except Exception:
                 pass
 
-        async def _send_local(self, text: str) -> None:
+        async def _send_local(self, text: str, plan: bool = False) -> None:
             from spare_paw.backend import IncomingMessage
             from spare_paw.core.engine import enqueue
 
-            msg = IncomingMessage(text=text)
+            msg = IncomingMessage(text=text, plan=plan)
             await enqueue(msg)
 
         async def _send_local_image(self, image_bytes: bytes, caption: str) -> None:

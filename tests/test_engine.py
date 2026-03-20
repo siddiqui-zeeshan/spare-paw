@@ -194,6 +194,87 @@ class TestProcessMessage:
         backend.send_text.assert_not_awaited()
 
 
+class TestProcessMessageWithPlan:
+    @pytest.mark.asyncio
+    async def test_plan_mode_calls_planner(self):
+        """When msg.plan=True, create_plan is called before the tool loop."""
+        app_state = _make_app_state()
+        backend = _make_backend()
+        msg = IncomingMessage(text="research AI trends", plan=True)
+
+        assembled = [
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "research AI trends"},
+        ]
+
+        with patch("spare_paw.core.engine.ctx_module") as mock_ctx, \
+             patch("spare_paw.core.engine.run_tool_loop", new_callable=AsyncMock, return_value="Bot reply"), \
+             patch("spare_paw.core.engine.build_system_prompt", new_callable=AsyncMock, return_value="system prompt"), \
+             patch("spare_paw.core.engine.create_plan", new_callable=AsyncMock, return_value="## Plan\n1. Search") as mock_plan, \
+             patch("spare_paw.core.engine.compact_with_retry", new_callable=AsyncMock):
+            mock_ctx.get_or_create_conversation = AsyncMock(return_value="conv-1")
+            mock_ctx.ingest = AsyncMock(return_value="msg-1")
+            mock_ctx.assemble = AsyncMock(return_value=assembled)
+
+            await process_message(app_state, msg, backend)
+
+        mock_plan.assert_awaited_once()
+        # Plan should be injected into messages
+        plan_msgs = [m for m in assembled if "[Plan]" in m.get("content", "")]
+        assert len(plan_msgs) == 1
+        assert "Search" in plan_msgs[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_plan_mode_skips_on_empty_plan(self):
+        """When planner returns empty string, no plan message is injected."""
+        app_state = _make_app_state()
+        backend = _make_backend()
+        msg = IncomingMessage(text="simple question", plan=True)
+
+        assembled = [
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "simple question"},
+        ]
+
+        with patch("spare_paw.core.engine.ctx_module") as mock_ctx, \
+             patch("spare_paw.core.engine.run_tool_loop", new_callable=AsyncMock, return_value="Reply"), \
+             patch("spare_paw.core.engine.build_system_prompt", new_callable=AsyncMock, return_value="system prompt"), \
+             patch("spare_paw.core.engine.create_plan", new_callable=AsyncMock, return_value=""), \
+             patch("spare_paw.core.engine.compact_with_retry", new_callable=AsyncMock):
+            mock_ctx.get_or_create_conversation = AsyncMock(return_value="conv-1")
+            mock_ctx.ingest = AsyncMock(return_value="msg-1")
+            mock_ctx.assemble = AsyncMock(return_value=assembled)
+
+            await process_message(app_state, msg, backend)
+
+        # No plan message should be in assembled messages
+        plan_msgs = [m for m in assembled if "[Plan]" in m.get("content", "")]
+        assert len(plan_msgs) == 0
+
+    @pytest.mark.asyncio
+    async def test_no_plan_mode_skips_planner(self):
+        """When msg.plan=False (default), create_plan is NOT called."""
+        app_state = _make_app_state()
+        backend = _make_backend()
+        msg = IncomingMessage(text="hello")
+
+        with patch("spare_paw.core.engine.ctx_module") as mock_ctx, \
+             patch("spare_paw.core.engine.run_tool_loop", new_callable=AsyncMock, return_value="Bot reply"), \
+             patch("spare_paw.core.engine.build_system_prompt", new_callable=AsyncMock, return_value="system prompt"), \
+             patch("spare_paw.core.engine.create_plan", new_callable=AsyncMock) as mock_plan, \
+             patch("spare_paw.core.engine.compact_with_retry", new_callable=AsyncMock):
+            mock_ctx.get_or_create_conversation = AsyncMock(return_value="conv-1")
+            mock_ctx.ingest = AsyncMock(return_value="msg-1")
+            mock_ctx.assemble = AsyncMock(return_value=[
+                {"role": "system", "content": "system prompt"},
+                {"role": "user", "content": "hello"},
+            ])
+
+            await process_message(app_state, msg, backend)
+
+        mock_plan.assert_not_awaited()
+
+
 class TestProcessAgentCallback:
     @pytest.mark.asyncio
     async def test_ingests_and_sends(self):

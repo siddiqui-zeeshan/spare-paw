@@ -28,6 +28,7 @@ class IncomingMessage:
     command: str | None = None
     command_args: list[str] = field(default_factory=list)
     user_id: int | str | None = None
+    plan: bool = False
 
 
 @runtime_checkable

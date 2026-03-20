@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from spare_paw import context as ctx_module
 from spare_paw.context import compact_with_retry
+from spare_paw.core.planner import create_plan
 from spare_paw.core.prompt import build_system_prompt
 from spare_paw.core.voice import VoiceTranscriptionError, transcribe
 from spare_paw.router.tool_loop import run_tool_loop
@@ -118,7 +119,27 @@ async def process_message(
             ),
         })
 
-    # 7. Run tool loop (duck-type callbacks from the backend)
+    # 7. Planning phase (only for /plan messages)
+    if msg.plan:
+        on_event_plan = getattr(backend, "on_tool_event", None)
+        if on_event_plan is not None:
+            from spare_paw.router.tool_loop import ToolEvent
+            on_event_plan(ToolEvent(kind="plan_start"))
+
+        plan_text = await create_plan(messages, app_state.config, app_state.router_client)
+
+        if on_event_plan is not None:
+            on_event_plan(ToolEvent(kind="plan_end"))
+
+        if plan_text:
+            messages.append({
+                "role": "system",
+                "content": f"[Plan]\n{plan_text}\n\n"
+                "Follow this plan step by step. Use parallel agent spawning "
+                "where the plan indicates steps are independent.",
+            })
+
+    # 8. Run tool loop (duck-type callbacks from the backend)
     on_event = getattr(backend, "on_tool_event", None)
     on_token = getattr(backend, "on_token", None)
 
@@ -138,10 +159,10 @@ async def process_message(
         on_token=on_token,
     )
 
-    # 8. Ingest assistant response
+    # 9. Ingest assistant response
     await ctx.ingest(conversation_id, "assistant", response_text)
 
-    # 9. LCM compaction in background
+    # 10. LCM compaction in background
     summary_model = app_state.config.get(
         "context.summary_model", "google/gemini-3.1-flash-lite-preview"
     )
@@ -150,7 +171,7 @@ async def process_message(
         name="lcm-compact",
     )
 
-    # 10. Send response via backend (markdown — backend handles formatting)
+    # 11. Send response via backend (markdown — backend handles formatting)
     await backend.send_text(response_text)
 
 
