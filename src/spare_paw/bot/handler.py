@@ -83,9 +83,11 @@ async def _queue_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if app_state is None:
         return
 
-    # Owner-only auth: silently ignore messages from non-owner
+    # Owner-only auth
     owner_id = app_state.config.get("telegram.owner_id")
     if update.effective_user is None or update.effective_user.id != owner_id:
+        uid = getattr(update.effective_user, "id", "unknown")
+        logger.warning("Auth rejected: telegram user %s (owner=%s)", uid, owner_id)
         return
 
     from spare_paw.backend import IncomingMessage

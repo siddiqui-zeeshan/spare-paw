@@ -46,7 +46,11 @@ def _get_app_state(context: ContextTypes.DEFAULT_TYPE) -> Any:
 def _is_owner(update: Update, app_state: Any) -> bool:
     """Check whether the update comes from the configured owner."""
     owner_id = app_state.config.get("telegram.owner_id")
-    return update.effective_user is not None and update.effective_user.id == owner_id
+    is_match = update.effective_user is not None and update.effective_user.id == owner_id
+    if not is_match:
+        uid = getattr(update.effective_user, "id", "unknown")
+        logger.warning("Auth rejected: telegram command from user %s", uid)
+    return is_match
 
 
 # ---------------------------------------------------------------------------

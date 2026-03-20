@@ -61,8 +61,11 @@ async def create_plan(
             plan_messages.append(msg)
 
     try:
+        logger.info("Planning phase started (model=%s, messages=%d)", model, len(plan_messages))
         response = await client.chat(plan_messages, model)
-        return response["choices"][0]["message"].get("content", "")
+        plan_text = response["choices"][0]["message"].get("content", "")
+        logger.info("Planning phase completed (%d chars)", len(plan_text))
+        return plan_text
     except Exception:
         logger.exception("Planning phase failed — proceeding without plan")
         return ""

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 from spare_paw import context as ctx_module
@@ -68,6 +69,7 @@ async def process_message(
     7. Background LCM compaction
     """
     ctx = ctx_module
+    t0 = time.perf_counter()
 
     # 1. Determine text content
     text = msg.text
@@ -172,6 +174,8 @@ async def process_message(
     )
 
     # 11. Send response via backend (markdown — backend handles formatting)
+    elapsed = time.perf_counter() - t0
+    logger.info("Message processed in %.1fs (%d chars response)", elapsed, len(response_text))
     await backend.send_text(response_text)
 
 

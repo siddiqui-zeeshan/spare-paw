@@ -51,7 +51,10 @@ class WebhookBackend:
     def _check_auth(self, request: web.Request) -> bool:
         auth = request.headers.get("Authorization", "")
         expected = f"Bearer {self._secret}"
-        return hmac.compare_digest(auth.encode(), expected.encode())
+        ok = hmac.compare_digest(auth.encode(), expected.encode())
+        if not ok:
+            logger.warning("Auth rejected: webhook %s from %s", request.path, request.remote)
+        return ok
 
     _MAX_SESSIONS = 50
 

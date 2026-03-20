@@ -109,6 +109,15 @@ async def run_tool_loop(
 
         response = await client.chat(messages, model, tools)
         _accumulate_usage(response)
+        usage = response.get("usage", {})
+        if usage:
+            logger.info(
+                "Iteration %d: tokens prompt=%d completion=%d total=%d",
+                iteration,
+                usage.get("prompt_tokens", 0),
+                usage.get("completion_tokens", 0),
+                usage.get("total_tokens", 0),
+            )
 
         if on_event is not None:
             on_event(ToolEvent(kind="llm_end", iteration=iteration))
@@ -198,8 +207,9 @@ async def run_tool_loop(
             try:
                 result = await tool_registry.execute(name, args, executor)
                 result_str = str(result) if not isinstance(result, str) else result
+                preview = result_str[:200] + "..." if len(result_str) > 200 else result_str
                 logger.info(
-                    "Iteration %d: tool %s executed successfully", iteration, name
+                    "Iteration %d: tool %s executed successfully: %s", iteration, name, preview
                 )
             except Exception as exc:
                 result_str = f"Error executing tool {name}: {exc}"
