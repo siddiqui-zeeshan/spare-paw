@@ -8,14 +8,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import warnings
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
-
-from telegram.ext import Application
 
 from spare_paw.config import Config, config
 from spare_paw.db import close_db, init_db
@@ -36,10 +35,27 @@ class AppState:
     semaphore: asyncio.Semaphore
     tool_registry: Any = None
     router_client: Any = None
-    application: Application | None = None
+    backend: Any = None
+    _application: Any = None
     scheduler: Any = None
     mcp_client: Any = None
     start_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def application(self) -> Any:
+        """Deprecated: use backend instead. Returns the underlying Application."""
+        warnings.warn(
+            "AppState.application is deprecated, use AppState.backend",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if self.backend is not None:
+            return self.backend._application
+        return self._application
+
+    @application.setter
+    def application(self, value: Any) -> None:
+        self._application = value
 
 
 # Module-level singleton so other modules can access shared state
@@ -190,7 +206,7 @@ async def _async_main() -> None:
         run_in_executor=False,
     )
 
-    # Inline send_file tool — sends a file via Telegram to the owner
+    # Inline send_file tool — sends a file to the owner via backend
     _send_file_blocked = {".spare-paw/config.yaml", ".ssh/", ".gnupg/"}
 
     async def _send_file(path: str, caption: str = "") -> str:
@@ -199,24 +215,13 @@ async def _async_main() -> None:
         fpath = _Path(path).resolve()
         if not fpath.exists():
             return _json.dumps({"error": f"File not found: {path}"})
-        # Block sensitive paths
         fpath_str = str(fpath)
         if any(blocked in fpath_str for blocked in _send_file_blocked):
             return _json.dumps({"error": "Access denied: sensitive path"})
-        owner_id = config.get("telegram.owner_id")
-        if not owner_id or not app_state.application:
-            return _json.dumps({"error": "Telegram not available"})
-        bot = app_state.application.bot
+        if app_state.backend is None:
+            return _json.dumps({"error": "Backend not available"})
+        await app_state.backend.send_file(str(fpath), caption=caption)
         suffix = fpath.suffix.lower()
-        with open(fpath, "rb") as f:
-            if suffix in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
-                await bot.send_photo(chat_id=owner_id, photo=f, caption=caption or None)
-            elif suffix in (".mp4", ".mov", ".avi"):
-                await bot.send_video(chat_id=owner_id, video=f, caption=caption or None)
-            elif suffix in (".mp3", ".ogg", ".m4a", ".wav"):
-                await bot.send_audio(chat_id=owner_id, audio=f, caption=caption or None)
-            else:
-                await bot.send_document(chat_id=owner_id, document=f, caption=caption or None)
         return _json.dumps({"success": True, "path": path, "type": suffix})
 
     tool_registry.register(
@@ -237,15 +242,9 @@ async def _async_main() -> None:
     # Inline send_message tool — proactively send a text message to the owner
     async def _send_message(text: str) -> str:
         import json as _json
-        owner_id = config.get("telegram.owner_id")
-        if not owner_id or not app_state.application:
-            return _json.dumps({"error": "Telegram not available"})
-        bot = app_state.application.bot
-        # Chunk if needed
-        while text:
-            chunk = text[:4096]
-            text = text[4096:]
-            await bot.send_message(chat_id=owner_id, text=chunk)
+        if app_state.backend is None:
+            return _json.dumps({"error": "Backend not available"})
+        await app_state.backend.send_text(text)
         return _json.dumps({"success": True})
 
     tool_registry.register(
@@ -281,23 +280,29 @@ async def _async_main() -> None:
 
     logger.info("Tool registry initialized with %d tools", len(tool_registry))
 
-    # 10. Build Telegram application
+    # 10. Build Telegram application and backend
     bot_token = config.get("telegram.bot_token")
     if not bot_token:
         logger.error("No telegram.bot_token in config. Run 'python -m spare_paw setup' first.")
         return
+
+    from telegram.ext import Application
 
     application = (
         Application.builder()
         .token(bot_token)
         .build()
     )
-    app_state.application = application
 
-    # 11. Store app_state in bot_data so handlers can access it
-    application.bot_data["app_state"] = app_state
+    owner_id = config.get("telegram.owner_id")
 
-    # 12. Register handlers
+    from spare_paw.bot.backend import TelegramBackend
+
+    backend = TelegramBackend(application, chat_id=owner_id)
+    app_state.backend = backend
+    backend.set_app_state(app_state)
+
+    # 11. Register handlers
     try:
         from spare_paw.bot.handler import setup_handlers, start_queue_processor
 
@@ -307,7 +312,7 @@ async def _async_main() -> None:
         start_queue_processor = None
         logger.warning("bot.handler not yet implemented; skipping handler registration")
 
-    # 13. Init cron scheduler
+    # 12. Init cron scheduler
     try:
         from spare_paw.cron.scheduler import init_scheduler
 
@@ -317,11 +322,11 @@ async def _async_main() -> None:
     except ImportError:
         logger.warning("cron.scheduler not yet implemented; skipping cron init")
 
-    # 14. Start heartbeat
+    # 13. Start heartbeat
     heartbeat_task = asyncio.create_task(_heartbeat(), name="heartbeat")
     logger.info("Heartbeat task started")
 
-    # 15. Setup graceful shutdown
+    # 14. Setup graceful shutdown
     shutdown_event = asyncio.Event()
 
     def _signal_handler(sig: int) -> None:
@@ -332,29 +337,13 @@ async def _async_main() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, _signal_handler, sig)
 
-    # 16. Start the bot
-    await application.initialize()
+    # 15. Start the bot via backend
+    await backend.start()
 
-    # Set Telegram bot command menu
-    from telegram import BotCommand
-    await application.bot.set_my_commands([
-        BotCommand("cron", "Manage scheduled tasks (list, remove, pause, resume, info)"),
-        BotCommand("config", "Show or change runtime config"),
-        BotCommand("status", "Uptime, memory, DB size, active crons"),
-        BotCommand("search", "Full-text search over conversation history"),
-        BotCommand("forget", "Start a new conversation"),
-        BotCommand("model", "Switch the active model"),
-        BotCommand("mcp", "List connected MCP servers and tools"),
-    ])
-
-    await application.start()
-
-    # 17. Start message queue processor (must be after initialize/start)
+    # 16. Start message queue processor (must be after initialize/start)
     if start_queue_processor is not None:
         start_queue_processor(application)
 
-    if application.updater is not None:
-        await application.updater.start_polling(drop_pending_updates=True)
     logger.info("Telegram bot started polling")
 
     # Wait until shutdown signal
@@ -389,11 +378,8 @@ async def _async_main() -> None:
     except Exception:
         logger.exception("Error closing OpenRouter client")
 
-    # Stop telegram bot
-    if application.updater is not None:
-        await application.updater.stop()
-    await application.stop()
-    await application.shutdown()
+    # Stop telegram bot via backend
+    await backend.stop()
 
     # Shutdown process pool
     executor.shutdown(wait=False)
