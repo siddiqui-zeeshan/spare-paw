@@ -7,6 +7,7 @@ module later without touching other components.
 Interface:
     ingest(conversation_id, role, content, metadata) -> message_id
     assemble(conversation_id, system_prompt) -> list[dict]
+    recent(conversation_id, limit) -> list[dict]
     search(query, limit) -> list[dict]
     get_or_create_conversation() -> conversation_id
     new_conversation() -> conversation_id
@@ -177,6 +178,32 @@ async def assemble(
         conversation_id,
     )
     return messages
+
+
+async def recent(conversation_id: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Return the last N messages for a conversation in chronological order.
+
+    Returns list of dicts with role, content, created_at.
+    """
+    db = await get_db()
+    async with db.execute(
+        """SELECT role, content, created_at
+           FROM messages
+           WHERE conversation_id = ?
+           ORDER BY created_at DESC
+           LIMIT ?""",
+        (conversation_id, limit),
+    ) as cursor:
+        rows = await cursor.fetchall()
+
+    return [
+        {
+            "role": row["role"],
+            "content": row["content"],
+            "created_at": row["created_at"],
+        }
+        for row in reversed(rows)
+    ]
 
 
 async def search(query: str, limit: int = 10) -> list[dict[str, Any]]:

@@ -37,6 +37,7 @@ class AppState:
     tool_registry: Any = None
     router_client: Any = None
     backend: Any = None
+    webhook: Any = None
     _application: Any = None
     scheduler: Any = None
     mcp_client: Any = None
@@ -121,52 +122,43 @@ async def _heartbeat() -> None:
         await asyncio.sleep(30)
 
 
-async def _async_main() -> None:
-    """Core async entry point that wires everything together and runs until stopped."""
+async def init_app_state() -> AppState:
+    """Initialize shared application state (config, DB, tools, router).
+
+    Used by the gateway and by the CLI standalone mode.
+    """
     global app_state
 
-    # 1. Load config
     config.load()
-
-    # 2. Setup logging (needs config loaded first)
     _setup_logging()
-    logger.info("Starting spare-paw gateway")
 
-    # 3. Init database
     await init_db()
-    logger.info("Database initialized")
 
-    # 4. Create process pool executor
     executor = ProcessPoolExecutor(max_workers=4)
-
-    # 5. Create semaphore for model call serialization
     semaphore = asyncio.Semaphore(1)
 
-    # 6. Create OpenRouter client
     from spare_paw.router.openrouter import OpenRouterClient
 
     api_key = config.get("openrouter.api_key")
     if not api_key:
-        logger.error("No openrouter.api_key in config. Run 'python -m spare_paw setup' first.")
-        return
+        raise RuntimeError("No openrouter.api_key in config. Run 'python -m spare_paw setup' first.")
 
     router_client = OpenRouterClient(api_key=api_key, semaphore=semaphore)
 
-    # 7. Create tool registry and register all tools
     from spare_paw.tools.registry import ToolRegistry
 
     tool_registry = ToolRegistry()
 
-    # 8. Build app state
-    app_state = AppState(
+    state = AppState(
         config=config,
         executor=executor,
         semaphore=semaphore,
         tool_registry=tool_registry,
         router_client=router_client,
     )
+    app_state = state
 
-    # 9. Register tools (needs app_state for cron_tools)
+    # Register tools
     config_data = config.data
 
     from spare_paw.tools import code, cron_tools, files, lcm_tools, memory, shell, subagent, tavily_search, web_scrape
@@ -176,12 +168,12 @@ async def _async_main() -> None:
     files.register(tool_registry, config_data)
     tavily_search.register(tool_registry, config_data)
     web_scrape.register(tool_registry, config_data)
-    cron_tools.register(tool_registry, config_data, app_state)
+    cron_tools.register(tool_registry, config_data, state)
     memory.register(tool_registry, config_data)
-    code.register(tool_registry, config_data, app_state)
+    code.register(tool_registry, config_data, state)
     load_custom_tools(tool_registry, executor)
-    register_meta_tools(tool_registry, config_data, app_state)
-    subagent.register(tool_registry, config_data, app_state)
+    register_meta_tools(tool_registry, config_data, state)
+    subagent.register(tool_registry, config_data, state)
     lcm_tools.register(tool_registry, config_data)
 
     # Inline read_logs tool
@@ -207,7 +199,7 @@ async def _async_main() -> None:
         run_in_executor=False,
     )
 
-    # Inline send_file tool — sends a file to the owner via backend
+    # Inline send_file tool
     _send_file_blocked = {".spare-paw/config.yaml", ".ssh/", ".gnupg/"}
 
     async def _send_file(path: str, caption: str = "") -> str:
@@ -219,9 +211,9 @@ async def _async_main() -> None:
         fpath_str = str(fpath)
         if any(blocked in fpath_str for blocked in _send_file_blocked):
             return _json.dumps({"error": "Access denied: sensitive path"})
-        if app_state.backend is None:
+        if state.backend is None:
             return _json.dumps({"error": "Backend not available"})
-        await app_state.backend.send_file(str(fpath), caption=caption)
+        await state.backend.send_file(str(fpath), caption=caption)
         suffix = fpath.suffix.lower()
         return _json.dumps({"success": True, "path": path, "type": suffix})
 
@@ -240,12 +232,12 @@ async def _async_main() -> None:
         run_in_executor=False,
     )
 
-    # Inline send_message tool — proactively send a text message to the owner
+    # Inline send_message tool
     async def _send_message(text: str) -> str:
         import json as _json
-        if app_state.backend is None:
+        if state.backend is None:
             return _json.dumps({"error": "Backend not available"})
-        await app_state.backend.send_text(text)
+        await state.backend.send_text(text)
         return _json.dumps({"success": True})
 
     tool_registry.register(
@@ -266,7 +258,7 @@ async def _async_main() -> None:
         run_in_executor=False,
     )
 
-    # 9b. Connect to MCP servers (if configured)
+    # Connect to MCP servers
     mcp_servers = config.get("mcp.servers", [])
     if mcp_servers:
         try:
@@ -274,12 +266,27 @@ async def _async_main() -> None:
 
             mcp_client = MCPClientManager()
             await mcp_client.connect_all(mcp_servers, tool_registry)
-            app_state.mcp_client = mcp_client
+            state.mcp_client = mcp_client
             logger.info("MCP client connected to %d servers", len(mcp_client.get_status()["servers"]))
         except Exception:
             logger.exception("Failed to initialize MCP client — continuing without MCP")
 
     logger.info("Tool registry initialized with %d tools", len(tool_registry))
+    return state
+
+
+async def _async_main() -> None:
+    """Core async entry point that wires everything together and runs until stopped."""
+    global app_state
+
+    # 1-9. Initialize app state (config, DB, tools, router)
+    try:
+        app_state = await init_app_state()
+    except RuntimeError as e:
+        logger.error(str(e))
+        return
+
+    logger.info("Starting spare-paw gateway")
 
     # 10. Build backend (Telegram or webhook)
     backend_type = config.get("backend", "telegram")
@@ -319,6 +326,18 @@ async def _async_main() -> None:
             start_queue_processor = None
             logger.warning("bot.handler not yet implemented; skipping handler registration")
 
+    # 10b. Start secondary webhook backend if enabled alongside primary
+    webhook_backend = None
+    if backend_type != "webhook" and config.get("webhook.enabled", False):
+        from spare_paw.webhook.backend import WebhookBackend
+
+        webhook_backend = WebhookBackend(
+            port=config.get("webhook.port", 8080),
+            secret=config.get("webhook.secret", ""),
+            app_state=app_state,
+        )
+        app_state.webhook = webhook_backend
+
     # 12. Init cron scheduler
     try:
         from spare_paw.cron.scheduler import init_scheduler
@@ -350,6 +369,11 @@ async def _async_main() -> None:
 
     # 15. Start the bot via backend
     await backend.start()
+
+    # 15b. Start secondary webhook backend
+    if webhook_backend is not None:
+        await webhook_backend.start()
+        logger.info("Webhook API listening on port %d", config.get("webhook.port", 8080))
 
     # 16. Start message queue processor (must be after initialize/start)
     if start_queue_processor is not None:
@@ -385,15 +409,19 @@ async def _async_main() -> None:
 
     # Close OpenRouter client
     try:
-        await router_client.close()
+        await app_state.router_client.close()
     except Exception:
         logger.exception("Error closing OpenRouter client")
 
-    # Stop telegram bot via backend
+    # Stop secondary webhook backend
+    if webhook_backend is not None:
+        await webhook_backend.stop()
+
+    # Stop primary backend
     await backend.stop()
 
     # Shutdown process pool
-    executor.shutdown(wait=False)
+    app_state.executor.shutdown(wait=False)
 
     # Close database
     await close_db()

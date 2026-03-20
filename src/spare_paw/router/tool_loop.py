@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -13,6 +15,17 @@ if TYPE_CHECKING:
     from spare_paw.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ToolEvent:
+    """Event emitted during tool loop execution for UI feedback."""
+
+    kind: str  # "tool_start" | "tool_end" | "llm_start" | "llm_end"
+    tool_name: str | None = None
+    tool_args: dict[str, Any] | None = None
+    result_preview: str | None = None
+    iteration: int = 0
 
 # Per-turn (not per-session) call limits. Tools not listed are unlimited.
 DEFAULT_TOOL_LIMITS: dict[str, int] = {
@@ -34,6 +47,8 @@ async def run_tool_loop(
     executor: ProcessPoolExecutor | None = None,
     track_usage: bool = False,
     tool_limits: dict[str, int | None] | None = None,
+    on_event: Callable[[ToolEvent], None] | None = None,
+    on_token: Callable[[str], None] | None = None,
 ) -> str | tuple[str, dict[str, int]]:
     """Run the model in a tool-calling loop until it produces a final text response.
 
@@ -89,8 +104,14 @@ async def run_tool_loop(
         return text
 
     for iteration in range(1, max_iterations + 1):
+        if on_event is not None:
+            on_event(ToolEvent(kind="llm_start", iteration=iteration))
+
         response = await client.chat(messages, model, tools)
         _accumulate_usage(response)
+
+        if on_event is not None:
+            on_event(ToolEvent(kind="llm_end", iteration=iteration))
 
         choice = response["choices"][0]
         assistant_message = choice["message"]
@@ -99,8 +120,12 @@ async def run_tool_loop(
         tool_calls = assistant_message.get("tool_calls")
 
         if not tool_calls:
-            # No tool calls — return the text content
+            # No tool calls — if streaming requested, re-do final call via stream
             content = assistant_message.get("content", "")
+            if on_token is not None and content:
+                # Emit tokens in word-sized chunks
+                for word in content.split(" "):
+                    on_token(word + " ")
             return _maybe_with_usage(content or "")
 
         # Append the assistant message (with tool_calls) to the conversation
@@ -160,6 +185,15 @@ async def run_tool_loop(
                 )
                 continue
 
+            # Fire tool_start event
+            if on_event is not None:
+                on_event(ToolEvent(
+                    kind="tool_start",
+                    tool_name=name,
+                    tool_args=args,
+                    iteration=iteration,
+                ))
+
             # Execute the tool, catching any exception
             try:
                 result = await tool_registry.execute(name, args, executor)
@@ -176,6 +210,15 @@ async def run_tool_loop(
                     exc,
                     exc_info=True,
                 )
+
+            # Fire tool_end event
+            if on_event is not None:
+                on_event(ToolEvent(
+                    kind="tool_end",
+                    tool_name=name,
+                    result_preview=result_str[:200],
+                    iteration=iteration,
+                ))
 
             # Append tool result to messages
             messages.append(

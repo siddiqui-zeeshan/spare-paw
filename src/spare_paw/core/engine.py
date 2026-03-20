@@ -118,7 +118,10 @@ async def process_message(
             ),
         })
 
-    # 7. Run tool loop
+    # 7. Run tool loop (duck-type callbacks from the backend)
+    on_event = getattr(backend, "on_tool_event", None)
+    on_token = getattr(backend, "on_token", None)
+
     model = app_state.config.get("models.default", "google/gemini-2.0-flash")
     tool_schemas = app_state.tool_registry.get_schemas()
     max_iterations = app_state.config.get("agent.max_tool_iterations", 20)
@@ -131,6 +134,8 @@ async def process_message(
         tool_registry=app_state.tool_registry,
         max_iterations=max_iterations,
         executor=app_state.executor,
+        on_event=on_event,
+        on_token=on_token,
     )
 
     # 8. Ingest assistant response

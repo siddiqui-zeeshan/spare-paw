@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 import aiohttp
@@ -146,6 +148,45 @@ class OpenRouterClient:
         # Should only reach here on connection-level failures after all retries
         assert last_exception is not None
         raise last_exception
+
+    async def chat_stream(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[str]:
+        """Yield text deltas via SSE streaming."""
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": True,
+        }
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = "auto"
+
+        session = self._get_session()
+        async with self._semaphore:
+            async with session.post(OPENROUTER_URL, json=body) as resp:
+                if resp.status >= 400:
+                    text = await resp.text()
+                    raise OpenRouterError(resp.status, text)
+
+                async for line in resp.content:
+                    decoded = line.decode("utf-8").strip()
+                    if not decoded.startswith("data: "):
+                        continue
+                    payload = decoded[6:]
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(payload)
+                        delta = chunk["choices"][0].get("delta", {})
+                        content = delta.get("content")
+                        if content:
+                            yield content
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
 
     async def close(self) -> None:
         """Close the underlying aiohttp session."""
