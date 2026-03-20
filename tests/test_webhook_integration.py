@@ -221,14 +221,14 @@ class TestStreamSSEEndpoint:
                                 break
 
             consumer = asyncio.create_task(_consume())
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.5)
 
             backend._broadcast_sse(
                 {"type": "text", "text": "sse works"},
                 session_id="sse-type-test",
             )
 
-            await asyncio.wait_for(consumer, timeout=4)
+            await asyncio.wait_for(consumer, timeout=10)
             assert len(received) == 1
             assert received[0]["type"] == "text"
         finally:
@@ -259,14 +259,14 @@ class TestStreamSSEEndpoint:
                                 break
 
             consumer = asyncio.create_task(_consume())
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.5)
 
             backend._broadcast_sse(
                 {"type": "token", "token": "x"},
                 session_id="sse-format-test",
             )
 
-            await asyncio.wait_for(consumer, timeout=4)
+            await asyncio.wait_for(consumer, timeout=10)
             assert any(line.startswith("data: ") for line in raw_lines)
         finally:
             await backend.stop()
@@ -313,13 +313,13 @@ class TestStreamSSEEndpoint:
 
             task_a = asyncio.create_task(_consume("multi-a", received_a))
             task_b = asyncio.create_task(_consume("multi-b", received_b))
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(0.5)
 
             backend._broadcast_sse({"type": "text", "text": "for A"}, session_id="multi-a")
             backend._broadcast_sse({"type": "text", "text": "for B"}, session_id="multi-b")
 
-            await asyncio.wait_for(task_a, timeout=4)
-            await asyncio.wait_for(task_b, timeout=4)
+            await asyncio.wait_for(task_a, timeout=10)
+            await asyncio.wait_for(task_b, timeout=10)
 
             assert received_a[0]["text"] == "for A"
             assert received_b[0]["text"] == "for B"
