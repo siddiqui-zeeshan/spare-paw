@@ -57,10 +57,10 @@ def _make_app_state(response_text="Bot response."):
     """Build a mock app_state with router_client, tool_registry, config, executor."""
     app_state = MagicMock()
     app_state.config.get = lambda key, default=None: {
-        "models.default": "test-model",
+        "models.main_agent": "test-model",
+        "models.summary": "summary-model",
         "agent.max_tool_iterations": 5,
         "agent.system_prompt": "You are a test bot.",
-        "context.summary_model": "summary-model",
     }.get(key, default)
     app_state.tool_registry.get_schemas.return_value = []
     app_state.router_client = MagicMock()

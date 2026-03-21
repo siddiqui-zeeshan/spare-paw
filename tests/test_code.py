@@ -14,8 +14,8 @@ def _make_app_state() -> MagicMock:
     app_state = MagicMock()
     app_state.config = MagicMock()
     app_state.config.get = MagicMock(side_effect=lambda key, default=None: {
-        "models.smart": "z-ai/glm-5",
-        "models.default": "google/gemini-2.0-flash",
+        "models.coder": "z-ai/glm-5",
+        "models.main_agent": "google/gemini-2.0-flash",
         "agent.max_tool_iterations": 10,
     }.get(key, default))
     app_state.router_client = AsyncMock()
@@ -41,8 +41,8 @@ class TestCodeTool:
 
     @pytest.mark.asyncio
     @patch("spare_paw.tools.code.run_tool_loop", new_callable=AsyncMock)
-    async def test_uses_smart_model(self, mock_loop):
-        """Verify the coding tool uses models.smart."""
+    async def test_uses_coder_model(self, mock_loop):
+        """Verify the coding tool uses models.coder."""
         from spare_paw.tools.code import _handle_code
 
         mock_loop.return_value = "Fixed the bug"
@@ -56,15 +56,15 @@ class TestCodeTool:
 
     @pytest.mark.asyncio
     @patch("spare_paw.tools.code.run_tool_loop", new_callable=AsyncMock)
-    async def test_falls_back_to_default_model(self, mock_loop):
-        """Verify fallback to default model when smart is not set."""
+    async def test_falls_back_to_main_agent_model(self, mock_loop):
+        """Verify fallback to main_agent model when coder is not set."""
         from spare_paw.tools.code import _handle_code
 
         mock_loop.return_value = "Done"
         app_state = _make_app_state()
         app_state.config.get = MagicMock(side_effect=lambda key, default=None: {
-            "models.smart": None,
-            "models.default": "google/gemini-2.0-flash",
+            "models.coder": None,
+            "models.main_agent": "google/gemini-2.0-flash",
             "agent.max_tool_iterations": 10,
         }.get(key, default))
 

@@ -58,6 +58,8 @@ SLASH_COMMANDS = [
     "/forget",
     "/status",
     "/model",
+    "/models",
+    "/roles",
     "/image",
 ]
 
@@ -382,7 +384,7 @@ if HAS_TEXTUAL:
                 await self._load_history_remote()
             else:
                 if self._app_state is not None:
-                    self._model = self._app_state.config.get("models.default", "unknown")
+                    self._model = self._app_state.config.get("models.main_agent", "unknown")
 
                 self.query_one("#chat-log", RichLog).write(
                     "[dim]Running in standalone local mode[/dim]\n"
@@ -428,9 +430,19 @@ if HAS_TEXTUAL:
                 from rich.markdown import Markdown
 
                 log_widget.write(Markdown(
-                    "**Commands:** /help, /exit, /forget, /status, /model, /image /path\n"
+                    "**Commands:** /help, /exit, /forget, /status, /model, /models, /image /path\n"
                     "**Keys:** Ctrl+C Exit, Ctrl+L Clear, Ctrl+N New, Esc Cancel, F1 Help"
                 ))
+                return
+
+            if text.lower() == "/roles":
+                from spare_paw.core.commands import cmd_roles
+                result = await cmd_roles()
+                log_widget.write(result)
+                return
+
+            if text.lower().startswith("/model"):
+                await self._handle_model_command(text, log_widget)
                 return
 
             if text.startswith("/image "):
@@ -608,9 +620,31 @@ if HAS_TEXTUAL:
             from rich.markdown import Markdown
 
             self.query_one("#chat-log", RichLog).write(Markdown(
-                "**Commands:** /help, /exit, /forget, /status, /model, /image /path\n"
+                "**Commands:** /help, /exit, /forget, /status, /model, /models, /image /path\n"
                 "**Keys:** Ctrl+C Exit, Ctrl+L Clear, Ctrl+N New, Esc Cancel, F1 Help"
             ))
+
+        async def _handle_model_command(self, text: str, log_widget: Any) -> None:
+            """Handle /model and /models commands locally."""
+            from spare_paw.core.commands import cmd_model, cmd_models
+
+            stripped = text.strip()
+
+            # /models [filter]
+            if stripped.lower().startswith("/models"):
+                query = stripped[7:].strip() or None
+                result = await cmd_models(self._app_state, query)
+                log_widget.write(result)
+                return
+
+            # /model [role] [model_id]
+            parts = stripped.split()
+            args = parts[1:] if len(parts) > 1 else None
+            result = await cmd_model(self._app_state, args)
+            log_widget.write(result)
+            if args and self._app_state:
+                self._model = self._app_state.config.get("models.main_agent", "unknown")
+                self._update_status_bar()
 
 
 async def run_tui(

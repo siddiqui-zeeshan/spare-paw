@@ -27,6 +27,8 @@ from spare_paw.core.commands import (
     cmd_config_show,
     cmd_forget,
     cmd_model,
+    cmd_models,
+    cmd_roles,
     cmd_search,
     cmd_status,
 )
@@ -275,10 +277,8 @@ async def _config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         result = await cmd_config_show(app_state)
         await update.message.reply_text(result)
     elif subcommand == "model":
-        if len(args) < 2:
-            await update.message.reply_text("Usage: /config model <model_name>")
-            return
-        result = await cmd_model(app_state, args[1])
+        model_args = args[1:] if len(args) > 1 else None
+        result = await cmd_model(app_state, model_args)
         await update.message.reply_text(result)
     elif subcommand == "reset":
         result = await cmd_config_reset(app_state)
@@ -338,13 +338,42 @@ async def _forget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 # ---------------------------------------------------------------------------
 
 async def _model_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Shortcut: /model <name> sets the default model."""
+    """Set or show model role assignments."""
     app_state = _get_app_state(context)
     if not _is_owner(update, app_state):
         return
 
-    model_name = context.args[0] if context.args else None
-    result = await cmd_model(app_state, model_name)
+    args = list(context.args) if context.args else None
+    result = await cmd_model(app_state, args)
+    await update.message.reply_text(result)
+
+
+# ---------------------------------------------------------------------------
+# /roles — list available model roles
+# ---------------------------------------------------------------------------
+
+async def _roles_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List available model roles."""
+    app_state = _get_app_state(context)
+    if not _is_owner(update, app_state):
+        return
+
+    result = await cmd_roles()
+    await update.message.reply_text(result)
+
+
+# ---------------------------------------------------------------------------
+# /models — list available OpenRouter models
+# ---------------------------------------------------------------------------
+
+async def _models_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List available models from OpenRouter."""
+    app_state = _get_app_state(context)
+    if not _is_owner(update, app_state):
+        return
+
+    query = " ".join(context.args) if context.args else None
+    result = await cmd_models(app_state, query)
     await update.message.reply_text(result)
 
 
@@ -553,6 +582,8 @@ def register_commands(application: "Application") -> None:
     application.add_handler(CommandHandler("search", _search_handler))
     application.add_handler(CommandHandler("forget", _forget_handler))
     application.add_handler(CommandHandler("model", _model_handler))
+    application.add_handler(CommandHandler("models", _models_handler))
+    application.add_handler(CommandHandler("roles", _roles_handler))
     application.add_handler(CommandHandler("tools", _tools_handler))
     application.add_handler(CommandHandler("approve", _approve_handler))
     application.add_handler(CommandHandler("agents", _agents_handler))

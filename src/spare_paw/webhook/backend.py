@@ -191,7 +191,7 @@ class WebhookBackend:
         model = "unknown"
         tool_count = 0
         if self._app_state is not None:
-            model = self._app_state.config.get("models.default", "unknown")
+            model = self._app_state.config.get("models.main_agent", "unknown")
             if self._app_state.tool_registry is not None:
                 tool_count = len(self._app_state.tool_registry)
         uptime = int(time.monotonic() - self._start_time)

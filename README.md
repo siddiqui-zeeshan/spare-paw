@@ -1,10 +1,10 @@
 # spare-paw
 
-A 24/7 personal AI agent accessible through Telegram. Runs on macOS, Linux, Windows, Android (Termux), or Docker. Features multi-model routing via OpenRouter, DAG-based lossless context management, shell and filesystem tools, scheduled tasks, voice transcription, and full-text search over conversation history. Cold starts in ~1 second.
+A 24/7 personal AI agent accessible through Telegram. Runs on macOS, Linux, Windows, Android (Termux), or Docker. Features role-based model selection via OpenRouter (7 roles with fallback chain), DAG-based lossless context management, shell and filesystem tools, scheduled tasks, voice transcription, and full-text search over conversation history. Cold starts in ~1 second.
 
 ## Features
 
-- **Multi-model routing** -- configure model slots (default, smart, cron) via OpenRouter; switch on the fly
+- **Role-based model selection** -- 7 model roles (main_agent, coder, planner, cron, researcher, analyst, summary) each independently configurable via OpenRouter; fallback chain: role-specific model -> main_agent -> google/gemini-2.0-flash
 - **Tool use** -- shell commands, file operations, web search, web scraping, cron management; all exposed as LLM function calls
 - **Scheduled tasks (cron)** -- create, edit, pause, resume, and manage recurring AI tasks with per-cron model selection
 - **One-shot reminders** -- ask the bot to remind you of something in X minutes/hours; it creates a cron that fires once and auto-deletes itself (e.g. "remind me to call John in 30 minutes")
@@ -107,23 +107,29 @@ A template is provided at `config.example.yaml`. Key sections:
 | `webhook` | Port, optional secret, and `enabled` flag for the HTTP webhook backend |
 | `remote` | `url` and `secret` for `spare-paw chat` to reach a remote instance |
 | `openrouter` | OpenRouter API key |
-| `models` | Model slots: `default`, `smart`, `cron_default` |
+| `models` | Role-based model assignments: `main_agent`, `coder`, `planner`, `cron`, `researcher`, `analyst`, `summary` |
 | `groq` | Groq API key for voice transcription |
 | `tavily` | Tavily API key for web search |
-| `context` | `max_messages`, `token_budget`, `safety_margin`, `fresh_tail_count`, `leaf_chunk_size`, `condensed_min_fanout`, `summary_model` |
+| `context` | `max_messages`, `token_budget`, `safety_margin`, `fresh_tail_count`, `leaf_chunk_size`, `condensed_min_fanout` |
 | `tools` | Per-tool enable/disable, timeouts, allowed paths |
 | `mcp` | MCP client server connections |
 | `agent` | `max_tool_iterations`, `system_prompt` template |
 | `logging` | Log level, rotation size, backup count |
 
-Model slot examples:
+Role-based model configuration:
 
 ```yaml
 models:
-  default: "google/gemini-2.0-flash"
-  smart: "anthropic/claude-sonnet-4"
-  cron_default: "google/gemini-2.0-flash"
+  main_agent: "google/gemini-2.0-flash"       # primary model for conversations
+  coder: "google/gemini-2.5-pro"               # used by coder subagents
+  planner: "anthropic/claude-sonnet-4"         # used by /plan deep thinking
+  cron: "google/gemini-2.0-flash"              # used for cron job execution
+  researcher: "google/gemini-2.0-flash"        # used by researcher subagents
+  analyst: "google/gemini-2.0-flash"           # used by analyst subagents
+  summary: "google/gemini-3.1-flash-lite"      # used for LCM context summaries
 ```
+
+Each role falls back through the chain: role-specific model -> `main_agent` -> `google/gemini-2.0-flash`. You only need to set the roles you want to override.
 
 LCM (context compaction) settings:
 
@@ -132,7 +138,6 @@ context:
   fresh_tail_count: 32
   leaf_chunk_size: 8
   condensed_min_fanout: 4
-  summary_model: "google/gemini-3.1-flash-lite"
 ```
 
 ### Webhook backend
@@ -257,12 +262,15 @@ Returns a JSON array of recent messages (newest last). `limit` defaults to 50.
 | `/cron resume <id>` | Resume a paused cron |
 | `/cron info <id>` | Show details, last result, recent failures |
 | `/config show` | Show current runtime config |
-| `/config model <name>` | Override default model for this session |
 | `/config reset` | Reset overrides to config.yaml defaults |
 | `/status` | Uptime, memory, DB size, active crons, last error |
 | `/search <query>` | Full-text search over conversation history |
 | `/forget` | Start a new conversation (history preserved in DB) |
-| `/model <name>` | Shortcut for `/config model <name>` |
+| `/model` | Show all role-to-model assignments |
+| `/model <model_id>` | Set the main_agent model |
+| `/model <role> <model_id>` | Set a specific role's model (e.g. `/model coder google/gemini-2.5-pro`) |
+| `/models` | List available models from OpenRouter |
+| `/models <filter>` | Filter available models by keyword (e.g. `/models gemini`) |
 | `/plan <prompt>` | Deep thinking: plan before executing (decomposes into steps, then runs) |
 | `/mcp` | List connected MCP servers and their tools |
 
@@ -402,7 +410,7 @@ Core Engine (core/engine.py)
 Context Manager (SQLite + FTS5 + DAG-based lossless context management)
   |
   v
-Model Router (OpenRouter API, semaphore-serialized, retry with backoff)
+Model Router (OpenRouter API, role-based selection, semaphore-serialized, retry with backoff)
   |
   v
 Tools (ProcessPoolExecutor: shell, files, web search, web scrape, cron, vision)

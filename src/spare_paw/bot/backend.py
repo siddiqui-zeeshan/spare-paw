@@ -223,7 +223,9 @@ class TelegramBackend:
             BotCommand("status", "Uptime, memory, DB size, active crons"),
             BotCommand("search", "Full-text search over conversation history"),
             BotCommand("forget", "Start a new conversation"),
-            BotCommand("model", "Switch the active model"),
+            BotCommand("model", "Set model for a role (/model <role> <id>)"),
+            BotCommand("models", "List available models from OpenRouter"),
+            BotCommand("roles", "List available model roles"),
             BotCommand("plan", "Deep thinking: plan before executing"),
             BotCommand("mcp", "List connected MCP servers and tools"),
         ])

@@ -13,6 +13,7 @@ from spare_paw.core.commands import (
     cmd_config_show,
     cmd_forget,
     cmd_model,
+    cmd_models,
     cmd_search,
     cmd_status,
 )
@@ -21,12 +22,13 @@ from spare_paw.core.commands import (
 def _make_app_state():
     app_state = MagicMock()
     app_state.config.get = lambda key, default=None: {
-        "models.default": "test-model",
-        "models.smart": "smart-model",
-        "models.cron_default": "cron-model",
+        "models.main_agent": "test-model",
+        "models.coder": "smart-model",
+        "models.cron": "cron-model",
     }.get(key, default)
     app_state.config._overrides = {}
     app_state.start_time = datetime(2026, 3, 20, 0, 0, 0, tzinfo=timezone.utc)
+    app_state.router_client = None
     return app_state
 
 
@@ -88,21 +90,96 @@ class TestCmdSearch:
 
 class TestCmdModel:
     @pytest.mark.asyncio
-    async def test_sets_model(self):
-        app_state = _make_app_state()
-        result = await cmd_model(app_state, "new-model")
-
-        assert isinstance(result, str)
-        assert "new-model" in result
-        app_state.config.set_override.assert_called_once_with("models.default", "new-model")
-
-    @pytest.mark.asyncio
-    async def test_shows_current_when_no_arg(self):
+    async def test_no_args_shows_all_roles(self):
         app_state = _make_app_state()
         result = await cmd_model(app_state, None)
 
         assert isinstance(result, str)
-        assert "test-model" in result
+        assert "main_agent" in result
+        assert "coder" in result
+        assert "cron" in result
+
+    @pytest.mark.asyncio
+    async def test_single_arg_sets_main_agent(self):
+        app_state = _make_app_state()
+        result = await cmd_model(app_state, ["new-model"])
+
+        assert isinstance(result, str)
+        assert "new-model" in result
+        app_state.config.set_override.assert_called_once_with("models.main_agent", "new-model")
+
+    @pytest.mark.asyncio
+    async def test_role_and_id_sets_role(self):
+        app_state = _make_app_state()
+        result = await cmd_model(app_state, ["coder", "google/gemini-2.5-pro"])
+
+        assert isinstance(result, str)
+        assert "coder" in result
+        assert "google/gemini-2.5-pro" in result
+        app_state.config.set_override.assert_called_once_with("models.coder", "google/gemini-2.5-pro")
+
+    @pytest.mark.asyncio
+    async def test_invalid_role_returns_error(self):
+        app_state = _make_app_state()
+        result = await cmd_model(app_state, ["badrole", "some-model"])
+
+        assert isinstance(result, str)
+        assert "Unknown role" in result
+        app_state.config.set_override.assert_not_called()
+
+
+class TestCmdRoles:
+    @pytest.mark.asyncio
+    async def test_lists_all_roles(self):
+        from spare_paw.core.commands import cmd_roles
+
+        result = await cmd_roles()
+
+        assert "main_agent" in result
+        assert "coder" in result
+        assert "researcher" in result
+        assert "summary" in result
+        assert "/model" in result
+
+
+class TestCmdModels:
+    @pytest.mark.asyncio
+    async def test_lists_available_models(self):
+        app_state = _make_app_state()
+        app_state.router_client = AsyncMock()
+        app_state.router_client.list_models = AsyncMock(return_value=[
+            {"id": "google/gemini-2.0-flash", "name": "Gemini Flash"},
+            {"id": "anthropic/claude-sonnet", "name": "Claude Sonnet"},
+        ])
+
+        result = await cmd_models(app_state)
+
+        assert "google/gemini-2.0-flash" in result
+        assert "anthropic/claude-sonnet" in result
+        assert "2 total" in result
+
+    @pytest.mark.asyncio
+    async def test_filters_by_query(self):
+        app_state = _make_app_state()
+        app_state.router_client = AsyncMock()
+        app_state.router_client.list_models = AsyncMock(return_value=[
+            {"id": "google/gemini-2.0-flash", "name": "Gemini Flash"},
+            {"id": "anthropic/claude-sonnet", "name": "Claude Sonnet"},
+        ])
+
+        result = await cmd_models(app_state, "gemini")
+
+        assert "google/gemini-2.0-flash" in result
+        assert "anthropic/claude-sonnet" not in result
+
+    @pytest.mark.asyncio
+    async def test_no_router_client(self):
+        app_state = _make_app_state()
+        app_state.router_client = None
+
+        result = await cmd_models(app_state)
+
+        assert "not available" in result.lower()
 
 
 class TestCmdConfigShow:

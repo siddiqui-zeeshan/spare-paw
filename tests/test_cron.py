@@ -18,8 +18,8 @@ def _make_app_state(**overrides) -> MagicMock:
     app_state = MagicMock()
     app_state.config = MagicMock()
     app_state.config.get = MagicMock(side_effect=lambda key, default=None: {
-        "models.cron_default": None,
-        "models.default": "test/model",
+        "models.cron": None,
+        "models.main_agent": "test/model",
         "agent.system_prompt": "You are a helpful assistant. Time: {current_time}",
         "agent.max_tool_iterations": 5,
         "telegram.owner_id": 12345,

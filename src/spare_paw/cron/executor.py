@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from spare_paw.config import resolve_model
 from spare_paw.core.prompt import build_system_prompt
 from spare_paw.db import get_db
 from spare_paw.router.tool_loop import run_tool_loop
@@ -41,12 +42,8 @@ async def execute_cron(
     now = datetime.now(timezone.utc).isoformat()
 
     try:
-        # 1. Resolve model
-        resolved_model = (
-            model
-            or app_state.config.get("models.cron_default")
-            or app_state.config.get("models.default", "google/gemini-2.0-flash")
-        )
+        # 1. Resolve model (per-job override → cron role → main_agent)
+        resolved_model = model or resolve_model(app_state.config, "cron")
 
         # 2. Build system prompt (includes IDENTITY.md, USER.md, SYSTEM.md)
         system_prompt = await build_system_prompt(app_state.config)

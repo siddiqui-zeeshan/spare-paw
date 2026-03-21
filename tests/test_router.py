@@ -596,3 +596,70 @@ class TestRunToolLoop:
         assert result == "done"
         # All 12 calls executed — default limit of 10 was removed
         assert mock_registry.execute.call_count == call_count
+
+
+# ---------------------------------------------------------------------------
+# OpenRouterClient.list_models
+# ---------------------------------------------------------------------------
+
+class TestListModels:
+    """Tests for OpenRouterClient.list_models()."""
+
+    @pytest.mark.asyncio
+    async def test_list_models_fetches_and_caches(self):
+        """list_models() fetches from API and caches the result."""
+        models_data = {
+            "data": [
+                {"id": "google/gemini-2.0-flash", "name": "Gemini 2.0 Flash"},
+                {"id": "anthropic/claude-sonnet", "name": "Claude Sonnet"},
+            ]
+        }
+        mock_session = MagicMock()
+        mock_session.closed = False
+        mock_session.get = MagicMock(
+            return_value=_make_response_ctx(200, json_data=models_data)
+        )
+
+        client = OpenRouterClient(api_key="k", semaphore=asyncio.Semaphore(1))
+        client._session = mock_session
+
+        result = await client.list_models()
+        assert len(result) == 2
+        assert result[0]["id"] == "google/gemini-2.0-flash"
+
+        # Second call should use cache (no new HTTP call)
+        result2 = await client.list_models()
+        assert result2 == result
+        assert mock_session.get.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_list_models_force_refresh(self):
+        """force_refresh=True bypasses the cache."""
+        models_data = {"data": [{"id": "m1", "name": "Model 1"}]}
+        mock_session = MagicMock()
+        mock_session.closed = False
+        mock_session.get = MagicMock(
+            return_value=_make_response_ctx(200, json_data=models_data)
+        )
+
+        client = OpenRouterClient(api_key="k", semaphore=asyncio.Semaphore(1))
+        client._session = mock_session
+
+        await client.list_models()
+        await client.list_models(force_refresh=True)
+        assert mock_session.get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_list_models_error_raises(self):
+        """list_models() raises OpenRouterError on HTTP errors."""
+        mock_session = MagicMock()
+        mock_session.closed = False
+        mock_session.get = MagicMock(
+            return_value=_make_response_ctx(401, text="unauthorized")
+        )
+
+        client = OpenRouterClient(api_key="bad", semaphore=asyncio.Semaphore(1))
+        client._session = mock_session
+
+        with pytest.raises(OpenRouterError):
+            await client.list_models()

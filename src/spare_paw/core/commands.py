@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from spare_paw import context as ctx_module
+from spare_paw.config import MODEL_ROLES
 from spare_paw.db import DB_PATH, get_db
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ async def cmd_status(app_state: Any) -> str:
         row = await cursor.fetchone()
     active_crons = row["cnt"] if row else 0
 
-    current_model = app_state.config.get("models.default", "(not set)")
+    current_model = app_state.config.get("models.main_agent", "(not set)")
 
     return (
         f"Uptime: {uptime_str}\n"
@@ -87,22 +88,89 @@ async def cmd_search(app_state: Any, query: str) -> str:
     return text
 
 
-async def cmd_model(app_state: Any, model_name: str | None) -> str:
-    """Set or show the default model."""
-    if not model_name:
-        current = app_state.config.get("models.default", "(not set)")
-        return f"Current model: {current}\nUsage: /model <name>"
+async def cmd_roles() -> str:
+    """List available model roles."""
+    lines = [f"  {role}" for role in MODEL_ROLES]
+    return (
+        "Available roles:\n" + "\n".join(lines)
+        + "\n\nUsage: /model <role> <model_id>"
+    )
 
-    app_state.config.set_override("models.default", model_name)
-    return f"Default model set to: {model_name}"
+
+async def cmd_model(app_state: Any, args: list[str] | None) -> str:
+    """Show or set model role assignments.
+
+    /model              — show all roles
+    /model <model_id>   — set main_agent (backward compat)
+    /model <role> <id>  — set a specific role
+    """
+    if not args:
+        lines: list[str] = []
+        for role in MODEL_ROLES:
+            model = app_state.config.get(f"models.{role}", "(not set)")
+            lines.append(f"  {role}: {model}")
+        return "Model roles:\n" + "\n".join(lines)
+
+    if len(args) == 1:
+        model_id = args[0]
+        app_state.config.set_override("models.main_agent", model_id)
+        return f"main_agent model set to: {model_id}"
+
+    role, model_id = args[0], args[1]
+    if role not in MODEL_ROLES:
+        return f"Unknown role: {role}\nValid roles: {', '.join(MODEL_ROLES)}"
+
+    # Best-effort validation against OpenRouter model list
+    router_client = getattr(app_state, "router_client", None)
+    if router_client is not None:
+        try:
+            models = await router_client.list_models()
+            valid_ids = {m["id"] for m in models}
+            if model_id not in valid_ids:
+                return f"Unknown model: {model_id}\nUse /models to list available models."
+        except Exception:
+            pass  # Validation is best-effort
+
+    app_state.config.set_override(f"models.{role}", model_id)
+    return f"{role} model set to: {model_id}"
+
+
+async def cmd_models(app_state: Any, query: str | None = None) -> str:
+    """List available models from OpenRouter, optionally filtered by keyword."""
+    router_client = getattr(app_state, "router_client", None)
+    if router_client is None:
+        return "OpenRouter client not available."
+    try:
+        models = await router_client.list_models()
+    except Exception as exc:
+        return f"Failed to fetch models: {exc}"
+
+    if query:
+        query_lower = query.lower()
+        models = [
+            m for m in models
+            if query_lower in m.get("id", "").lower()
+            or query_lower in m.get("name", "").lower()
+        ]
+
+    if not models:
+        return "No models found."
+
+    lines = [f"  {m['id']}" for m in models[:30]]
+    result = f"Available models ({len(models)} total):\n" + "\n".join(lines)
+    if len(models) > 30:
+        result += f"\n  ... and {len(models) - 30} more. Use /models <filter> to narrow."
+    return result
 
 
 async def cmd_config_show(app_state: Any) -> str:
     """Show current model configuration and runtime overrides."""
     cfg = app_state.config
-    default_model = cfg.get("models.default", "(not set)")
-    smart_model = cfg.get("models.smart", "(not set)")
-    cron_model = cfg.get("models.cron_default", "(not set)")
+
+    model_lines: list[str] = []
+    for role in MODEL_ROLES:
+        model = cfg.get(f"models.{role}", "(not set)")
+        model_lines.append(f"  {role}: {model}")
 
     overrides = cfg._overrides  # noqa: SLF001
     override_text = "(none)"
@@ -112,10 +180,7 @@ async def cmd_config_show(app_state: Any) -> str:
         override_text = "\n".join(f"  {k} = {v}" for k, v in override_lines)
 
     return (
-        f"Models:\n"
-        f"  default: {default_model}\n"
-        f"  smart: {smart_model}\n"
-        f"  cron_default: {cron_model}\n\n"
+        "Models:\n" + "\n".join(model_lines) + "\n\n"
         f"Runtime overrides:\n{override_text}"
     )
 

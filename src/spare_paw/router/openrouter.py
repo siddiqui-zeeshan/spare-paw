@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -13,6 +14,7 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
 # Retry configuration
 _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
@@ -42,6 +44,8 @@ class OpenRouterClient:
         self._api_key = api_key
         self._semaphore = semaphore
         self._session: aiohttp.ClientSession | None = None
+        self._models_cache: list[dict[str, Any]] | None = None
+        self._models_cache_time: float = 0
 
     def _get_session(self) -> aiohttp.ClientSession:
         """Lazily create and return the aiohttp session."""
@@ -187,6 +191,30 @@ class OpenRouterClient:
                             yield content
                     except (json.JSONDecodeError, KeyError, IndexError):
                         continue
+
+    async def list_models(self, force_refresh: bool = False) -> list[dict[str, Any]]:
+        """Fetch available models from the OpenRouter models endpoint.
+
+        Results are cached for 1 hour. Does not use the semaphore
+        since this is read-only metadata, not a chat completion.
+        """
+        _CACHE_TTL = 3600  # 1 hour
+        if (
+            self._models_cache is not None
+            and not force_refresh
+            and (time.monotonic() - self._models_cache_time < _CACHE_TTL)
+        ):
+            return self._models_cache
+
+        session = self._get_session()
+        async with session.get(OPENROUTER_MODELS_URL) as resp:
+            if resp.status >= 400:
+                text = await resp.text()
+                raise OpenRouterError(resp.status, text)
+            data: dict[str, Any] = await resp.json()
+            self._models_cache = data.get("data", [])
+            self._models_cache_time = time.monotonic()
+            return self._models_cache
 
     async def close(self) -> None:
         """Close the underlying aiohttp session."""

@@ -22,8 +22,8 @@ def _make_router_client(plan_text: str = "## Plan\n1. Search the web"):
 
 def _make_config(overrides: dict | None = None):
     store = {
-        "models.default": "test-model",
-        "planning.model": "cheap-model",
+        "models.main_agent": "test-model",
+        "models.planner": "cheap-model",
         **(overrides or {}),
     }
     config = MagicMock()
@@ -51,7 +51,7 @@ class TestCreatePlan:
     async def test_uses_planning_model(self):
         """create_plan uses the planning.model config key."""
         client = _make_router_client()
-        config = _make_config({"planning.model": "google/gemini-2.0-flash"})
+        config = _make_config({"models.planner": "google/gemini-2.0-flash"})
         messages = [
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "do something complex"},
@@ -64,9 +64,9 @@ class TestCreatePlan:
 
     @pytest.mark.asyncio
     async def test_falls_back_to_default_model(self):
-        """When planning.model is not set, falls back to models.default."""
+        """When models.planner is not set, falls back to models.main_agent."""
         client = _make_router_client()
-        config = _make_config({"planning.model": None})
+        config = _make_config({"models.planner": None})
         messages = [
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "do something"},

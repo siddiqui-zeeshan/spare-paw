@@ -10,6 +10,7 @@ import json
 import logging
 from typing import Any
 
+from spare_paw.config import resolve_model
 from spare_paw.router.tool_loop import run_tool_loop
 
 logger = logging.getLogger(__name__)
@@ -34,11 +35,7 @@ def _code_system_prompt() -> str:
 
 async def _handle_code(app_state: Any, task: str) -> str:
     """Run a coding sub-agent with the smart model."""
-    # Resolve smart model
-    smart_model = (
-        app_state.config.get("models.smart")
-        or app_state.config.get("models.default", "google/gemini-2.0-flash")
-    )
+    smart_model = resolve_model(app_state.config, "coder")
 
     # Filter tools to shell + files + any MCP tools
     all_schemas = app_state.tool_registry.get_schemas()

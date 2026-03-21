@@ -15,6 +15,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from spare_paw.config import resolve_model
+
 logger = logging.getLogger(__name__)
 
 # Active and completed agents
@@ -124,10 +126,10 @@ async def _run_agent(
         if system_suffix:
             system_prompt = f"{system_prompt}\n\n{system_suffix}"
 
-        # Resolve model
-        resolved_model = (
-            model
-            or app_state.config.get("models.default", "google/gemini-2.0-flash")
+        # Resolve model (explicit → role-specific → main_agent)
+        agent_type = _agents[agent_id].get("agent_type")
+        resolved_model = model or resolve_model(
+            app_state.config, agent_type or "main_agent"
         )
 
         # Get tool schemas (filtered if requested)

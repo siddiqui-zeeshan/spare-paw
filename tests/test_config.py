@@ -7,7 +7,16 @@ from pathlib import Path
 
 import yaml
 
-from spare_paw.config import Config, DEFAULTS, _deep_merge, _resolve_dot, _set_dot
+from spare_paw.config import (
+    Config,
+    DEFAULT_MODEL,
+    DEFAULTS,
+    MODEL_ROLES,
+    _deep_merge,
+    _resolve_dot,
+    _set_dot,
+    resolve_model,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -213,3 +222,47 @@ class TestConfigThreadSafety:
             t.join()
 
         assert errors == [], f"Thread safety errors: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# resolve_model — role-based model resolution
+# ---------------------------------------------------------------------------
+
+class TestResolveModel:
+    def test_returns_role_specific_model(self):
+        cfg = Config()
+        cfg.set_override("models.coder", "anthropic/claude-sonnet")
+        assert resolve_model(cfg, "coder") == "anthropic/claude-sonnet"
+
+    def test_falls_back_to_main_agent(self):
+        """When a role has no default and no override, falls back to main_agent."""
+        cfg = Config()
+        cfg.set_override("models.main_agent", "google/gemini-2.5-pro")
+        # planner has no default in DEFAULTS, so it falls back to main_agent
+        assert resolve_model(cfg, "planner") == "google/gemini-2.5-pro"
+
+    def test_falls_back_to_default_model(self):
+        """When no role-specific or main_agent is set, falls back to DEFAULT_MODEL."""
+        cfg = Config()
+        # analyst has no default in DEFAULTS, so falls through to main_agent → DEFAULT_MODEL
+        assert resolve_model(cfg, "analyst") == DEFAULT_MODEL
+
+    def test_main_agent_reads_directly(self):
+        cfg = Config()
+        cfg.set_override("models.main_agent", "google/gemini-2.5-pro")
+        assert resolve_model(cfg, "main_agent") == "google/gemini-2.5-pro"
+
+    def test_role_specific_takes_precedence_over_main_agent(self):
+        cfg = Config()
+        cfg.set_override("models.main_agent", "google/gemini-2.5-pro")
+        cfg.set_override("models.researcher", "anthropic/claude-sonnet")
+        assert resolve_model(cfg, "researcher") == "anthropic/claude-sonnet"
+
+    def test_coder_has_default(self):
+        """Coder role has its own default (z-ai/glm-5)."""
+        cfg = Config()
+        assert resolve_model(cfg, "coder") == "z-ai/glm-5"
+
+    def test_all_roles_defined(self):
+        expected = {"main_agent", "coder", "planner", "cron", "researcher", "analyst", "summary"}
+        assert set(MODEL_ROLES) == expected

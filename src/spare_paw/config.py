@@ -17,11 +17,18 @@ from spare_paw.platform import default_allowed_paths, platform_label
 CONFIG_DIR = Path.home() / ".spare-paw"
 CONFIG_PATH = CONFIG_DIR / "config.yaml"
 
+DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
+MODEL_ROLES = ("main_agent", "coder", "planner", "cron", "researcher", "analyst", "summary")
+
 
 def _build_defaults() -> dict[str, Any]:
     """Build DEFAULTS with platform-aware values resolved at import time."""
     label = platform_label()
     return {
+        "models": {
+            "main_agent": DEFAULT_MODEL,
+            "coder": "z-ai/glm-5",
+        },
         "context": {
             "max_messages": 64,
             "token_budget": 120000,
@@ -167,6 +174,18 @@ class Config:
     def __contains__(self, key: str) -> bool:
         with self._lock:
             return key in self._data
+
+
+def resolve_model(config: "Config", role: str) -> str:
+    """Resolve the model for a given role using the fallback chain.
+
+    Chain: models.<role> → models.main_agent → DEFAULT_MODEL
+    """
+    if role != "main_agent":
+        specific = config.get(f"models.{role}")
+        if specific:
+            return specific
+    return config.get("models.main_agent", DEFAULT_MODEL)
 
 
 # Module-level singleton

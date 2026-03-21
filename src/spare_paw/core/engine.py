@@ -13,6 +13,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from spare_paw import context as ctx_module
+from spare_paw.config import resolve_model
 from spare_paw.context import compact_with_retry
 from spare_paw.core.planner import create_plan
 from spare_paw.core.prompt import build_system_prompt
@@ -143,7 +144,7 @@ async def process_message(
     on_event = getattr(backend, "on_tool_event", None)
     on_token = getattr(backend, "on_token", None)
 
-    model = app_state.config.get("models.default", "google/gemini-2.0-flash")
+    model = resolve_model(app_state.config, "main_agent")
     tool_schemas = app_state.tool_registry.get_schemas()
     max_iterations = app_state.config.get("agent.max_tool_iterations", 20)
 
@@ -163,9 +164,7 @@ async def process_message(
     await ctx.ingest(conversation_id, "assistant", response_text)
 
     # 10. LCM compaction in background
-    summary_model = app_state.config.get(
-        "context.summary_model", "google/gemini-3.1-flash-lite-preview"
-    )
+    summary_model = resolve_model(app_state.config, "summary")
     asyncio.create_task(
         compact_with_retry(conversation_id, app_state.router_client, summary_model),
         name="lcm-compact",
@@ -202,7 +201,7 @@ async def process_agent_callback(
         system_prompt = await build_system_prompt(app_state.config)
         messages = await ctx.assemble(conversation_id, system_prompt)
 
-        model = app_state.config.get("models.default", "google/gemini-2.0-flash")
+        model = resolve_model(app_state.config, "main_agent")
         tool_schemas = app_state.tool_registry.get_schemas()
         max_iterations = app_state.config.get("agent.max_tool_iterations", 20)
 

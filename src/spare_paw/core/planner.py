@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from spare_paw.config import resolve_model
+
 if TYPE_CHECKING:
     from spare_paw.router.openrouter import OpenRouterClient
 
@@ -51,9 +53,7 @@ async def create_plan(
     no tool schemas. Returns the plan as markdown text, or an empty
     string on failure (graceful degradation).
     """
-    model = config.get("planning.model") or config.get(
-        "models.default", "google/gemini-2.0-flash"
-    )
+    model = resolve_model(config, "planner")
 
     plan_messages = [{"role": "system", "content": PLANNING_SYSTEM_PROMPT}]
     for msg in messages:
