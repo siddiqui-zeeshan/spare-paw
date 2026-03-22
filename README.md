@@ -1,6 +1,6 @@
 # spare-paw
 
-A 24/7 personal AI agent accessible through Telegram. Runs on macOS, Linux, Windows, Android (Termux), or Docker. Features role-based model selection via OpenRouter (7 roles with fallback chain), DAG-based lossless context management, shell and filesystem tools, scheduled tasks, voice transcription, and full-text search over conversation history. Cold starts in ~1 second.
+A 24/7 personal AI agent accessible through Telegram. Runs on macOS, Linux, Windows, Android (Termux), or Docker. Features role-based model selection via OpenRouter (7 roles with fallback chain), DAG-based lossless context management, shell and filesystem tools, scheduled tasks, voice transcription, full-text search over conversation history, and runtime-configurable agent orchestration with per-type tool limits and heartbeat watchdog. Cold starts in ~1 second.
 
 ## Features
 
@@ -18,7 +18,12 @@ A 24/7 personal AI agent accessible through Telegram. Runs on macOS, Linux, Wind
 - **Message queue with backpressure** -- incoming messages queue while the bot is busy; typing indicator signals processing
 - **Heartbeat watchdog** -- detects event loop starvation and deadlocks, not just process crashes
 - **Deep thinking (`/plan`)** -- on-demand planning phase that decomposes complex requests into a structured execution plan before the tool loop runs. A single cheap LLM call (no tools) produces a step-by-step plan with tool/agent classification and parallelism hints; the plan is injected as context for the main model to follow. Regular messages skip planning entirely (zero overhead)
-- **Agent orchestration** -- spawn multiple subagents in a single turn; agents spawned in the same tool-call batch are deterministically grouped (via a shared batch group_id injected by the tool loop) and their results are delivered together as one synthesized response. Three predefined archetypes: `researcher` (web search + scraping), `coder` (shell + files), `analyst` (data analysis), each with preset tools and system prompt. Safety limits: max 3 concurrent agents, max 3 per group
+- **Agent orchestration** -- spawn multiple subagents in a single turn; agents spawned in the same tool-call batch are deterministically grouped (via a shared batch group_id injected by the tool loop) and their results are delivered together as one synthesized response. Three predefined archetypes: `researcher` (web search + scraping), `coder` (shell + files), `analyst` (data analysis), each with preset tools and system prompt. Custom archetypes can be added at runtime via `/config set agent.types`
+- **Agent reliability** -- queue race fix prevents duplicate deliveries, done-callbacks ensure results are always collected, crash detection marks failed agents as errored instead of leaving them stuck. `list_agents` returns enriched status with timing and error details
+- **Per-agent-type tool limits** -- each agent archetype (`researcher`, `coder`, `analyst`) has independent tool iteration limits, configurable via `agent.tool_limits.*`
+- **Heartbeat watchdog for agents** -- stuck agents are automatically cancelled after 3 minutes of inactivity (no tool calls or LLM responses); timeout is configurable via `agent.watchdog_timeout`
+- **Ephemeral progress messages** -- during agent execution, progress updates are sent as Telegram messages, edited in-place as status changes, and deleted when the agent completes, keeping the chat clean
+- **Summary token budget** -- compressed DAG history injected into the system prompt is capped at 5K tokens, preventing context bloat from large conversation histories
 - **Token/cost tracking** -- per-agent token usage tracking (prompt, completion, total) from OpenRouter, visible via `list_agents`
 - **MCP client** -- connect to external MCP servers (GitHub, filesystem, etc.) and use their tools alongside native tools
 - **Owner-only auth** -- all messages from non-owner Telegram users are silently ignored
@@ -113,7 +118,7 @@ A template is provided at `config.example.yaml`. Key sections:
 | `context` | `max_messages`, `token_budget`, `safety_margin`, `fresh_tail_count`, `leaf_chunk_size`, `condensed_min_fanout` |
 | `tools` | Per-tool enable/disable, timeouts, allowed paths |
 | `mcp` | MCP client server connections |
-| `agent` | `max_tool_iterations`, `system_prompt` template |
+| `agent` | `max_tool_iterations`, `system_prompt` template, `max_concurrent`, `max_per_group`, `watchdog_timeout`, `tool_limits`, `types` |
 | `logging` | Log level, rotation size, backup count |
 
 Role-based model configuration:
@@ -262,10 +267,12 @@ Returns a JSON array of recent messages (newest last). `limit` defaults to 50.
 | `/cron resume <id>` | Resume a paused cron |
 | `/cron info <id>` | Show details, last result, recent failures |
 | `/config show` | Show current runtime config |
+| `/config set <key> <value>` | Set a runtime config value (see [Runtime Configuration](#runtime-configuration) below) |
 | `/config reset` | Reset overrides to config.yaml defaults |
 | `/status` | Uptime, memory, DB size, active crons, last error |
 | `/search <query>` | Full-text search over conversation history |
 | `/forget` | Start a new conversation (history preserved in DB) |
+| `/roles` | Show all role-to-model assignments (which model is used for each role) |
 | `/model` | Show all role-to-model assignments |
 | `/model <model_id>` | Set the main_agent model |
 | `/model <role> <model_id>` | Set a specific role's model (e.g. `/model coder google/gemini-2.5-pro`) |
@@ -273,6 +280,23 @@ Returns a JSON array of recent messages (newest last). `limit` defaults to 50.
 | `/models <filter>` | Filter available models by keyword (e.g. `/models gemini`) |
 | `/plan <prompt>` | Deep thinking: plan before executing (decomposes into steps, then runs) |
 | `/mcp` | List connected MCP servers and their tools |
+
+### Runtime Configuration
+
+Use `/config set <key> <value>` to tune constants at runtime without restarting. Changes take effect immediately and persist until `/config reset`.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `agent.max_concurrent` | 3 | Maximum number of agents running simultaneously |
+| `agent.max_per_group` | 3 | Maximum agents in a single batch group |
+| `agent.watchdog_timeout` | 180 | Seconds of inactivity before a stuck agent is cancelled |
+| `agent.tool_limits.shell` | *(per-type)* | Max shell tool iterations for each agent type |
+| `agent.tool_limits.web_search` | *(per-type)* | Max web search iterations for each agent type |
+| `agent.types` | *(built-in)* | Add custom agent archetypes with their own tools and prompts |
+| `tools.shell.timeout_seconds` | 30 | Shell command execution timeout |
+| `tools.shell.max_output_chars` | 10000 | Maximum characters of shell output returned to the model |
+| `openrouter.max_retries` | 3 | Number of retries on transient OpenRouter API failures |
+| `openrouter.retry_base_delay` | 1.0 | Base delay in seconds for exponential retry backoff |
 
 ## Tools
 
@@ -432,9 +456,13 @@ Key design points:
 - Cron outputs are delivered to the active backend but do not enter conversation memory
 - Subagents don't message the user directly; results flow back through a group callback queue, letting the main LLM synthesize a unified response. Results are stored in conversation memory for follow-up questions
 - Multiple agents spawned in one tool-call batch are deterministically grouped by the tool loop (shared batch group_id); the turn stop is deferred until all spawns in the batch complete
-- Safety limits: max 3 concurrent agents, max 3 per group
-- Three agent archetypes (`researcher`, `coder`, `analyst`) each set appropriate tools and system prompt
+- Safety limits: max 3 concurrent agents, max 3 per group (both runtime-configurable via `/config set`)
+- Three built-in agent archetypes (`researcher`, `coder`, `analyst`) each with independent tool limits; custom archetypes can be added at runtime
+- Per-agent heartbeat watchdog cancels stuck agents after 3 minutes of inactivity (configurable)
+- Queue race prevention, done-callbacks, and crash detection ensure reliable agent result collection
+- Ephemeral Telegram progress messages (send, edit-in-place, delete-on-completion) keep the chat clean during agent work
 - Each agent tracks token usage (prompt, completion, total) from OpenRouter API responses
+- Compressed DAG history in the system prompt is capped at a 5K token budget to prevent context bloat
 - Token counting uses tiktoken with a configurable safety margin for non-OpenAI models
 - DAG compaction runs automatically after each turn: messages beyond the fresh tail are chunked into leaf summaries, and when enough leaves accumulate they condense into higher-level nodes. Schema v3 adds a `summary_nodes` table with FTS5 index. `assemble()` injects compressed history between the system prompt and fresh messages
 - Platform detection at startup (`platform.py`) sets shell tool description, default allowed paths, and selects the correct `SYSTEM.md` template for Termux, macOS, Linux, and Windows
