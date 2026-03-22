@@ -32,10 +32,18 @@ A 24/7 personal AI agent accessible through Telegram. Runs on macOS, Linux, Wind
 
 ## Quick Start
 
-### Install
+### One-liner install
 
 ```bash
-git clone <repo-url>
+curl -sSL https://raw.githubusercontent.com/siddiqui-zeeshan/spare-paw/main/scripts/install.sh | bash
+```
+
+This installs spare-paw in a venv at `~/.spare-paw/venv/`, runs the setup wizard, and optionally creates a systemd service (Linux). Works on Linux, macOS, and Termux.
+
+### Manual install
+
+```bash
+git clone https://github.com/siddiqui-zeeshan/spare-paw.git
 cd spare-paw
 pip install .
 ```
