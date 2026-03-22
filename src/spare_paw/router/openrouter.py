@@ -16,12 +16,8 @@ logger = logging.getLogger(__name__)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
-# Retry configuration
 _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 _NON_RETRYABLE_STATUSES = frozenset({400, 401, 403})
-_MAX_RETRIES = 3
-_BASE_DELAY = 1.0  # seconds
-_MAX_DELAY = 30.0  # seconds
 
 
 class OpenRouterError(Exception):
@@ -93,10 +89,15 @@ class OpenRouterClient:
 
     async def _request_with_retry(self, body: dict[str, Any]) -> dict[str, Any]:
         """Execute the HTTP request with exponential backoff on transient errors."""
+        from spare_paw.config import config
+        max_retries = config.get("openrouter.max_retries", 3)
+        base_delay = config.get("openrouter.retry_base_delay", 1.0)
+        max_delay = config.get("openrouter.retry_max_delay", 30.0)
+
         session = self._get_session()
         last_exception: Exception | None = None
 
-        for attempt in range(_MAX_RETRIES + 1):
+        for attempt in range(max_retries + 1):
             try:
                 async with session.post(OPENROUTER_URL, json=body) as resp:
                     # Non-retryable client errors — fail immediately
@@ -108,16 +109,16 @@ class OpenRouterClient:
                     if resp.status in _RETRYABLE_STATUSES:
                         text = await resp.text()
                         last_exception = OpenRouterError(resp.status, text)
-                        if attempt < _MAX_RETRIES:
+                        if attempt < max_retries:
                             delay = min(
-                                _BASE_DELAY * (2 ** attempt),
-                                _MAX_DELAY,
+                                base_delay * (2 ** attempt),
+                                max_delay,
                             )
                             logger.warning(
                                 "OpenRouter %d on attempt %d/%d, retrying in %.1fs",
                                 resp.status,
                                 attempt + 1,
-                                _MAX_RETRIES + 1,
+                                max_retries + 1,
                                 delay,
                             )
                             await asyncio.sleep(delay)
@@ -136,13 +137,13 @@ class OpenRouterClient:
 
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                 last_exception = exc
-                if attempt < _MAX_RETRIES:
-                    delay = min(_BASE_DELAY * (2 ** attempt), _MAX_DELAY)
+                if attempt < max_retries:
+                    delay = min(base_delay * (2 ** attempt), max_delay)
                     logger.warning(
                         "OpenRouter connection error on attempt %d/%d (%s), "
                         "retrying in %.1fs",
                         attempt + 1,
-                        _MAX_RETRIES + 1,
+                        max_retries + 1,
                         exc,
                         delay,
                     )
@@ -198,11 +199,12 @@ class OpenRouterClient:
         Results are cached for 1 hour. Does not use the semaphore
         since this is read-only metadata, not a chat completion.
         """
-        _CACHE_TTL = 3600  # 1 hour
+        from spare_paw.config import config
+        cache_ttl = config.get("openrouter.models_cache_ttl", 3600)
         if (
             self._models_cache is not None
             and not force_refresh
-            and (time.monotonic() - self._models_cache_time < _CACHE_TTL)
+            and (time.monotonic() - self._models_cache_time < cache_ttl)
         ):
             return self._models_cache
 

@@ -170,12 +170,22 @@ def execute_web_scrape(
 
 def register(registry: ToolRegistry, config: dict[str, Any]) -> None:
     """Register the ``web_scrape`` tool with *registry*."""
-    # Use the top-level execute_web_scrape directly — closures can't be
-    # pickled for ProcessPoolExecutor.
+    import functools
+
+    tool_cfg = config.get("tools", {}).get("web_scrape", {})
+    default_timeout = tool_cfg.get("timeout_seconds", 15)
+    max_chars = tool_cfg.get("max_content_chars", 20_000)
+
+    PARAMETERS_SCHEMA["properties"]["timeout"]["default"] = default_timeout
+
+    handler = functools.partial(
+        execute_web_scrape, timeout=default_timeout, max_chars=max_chars,
+    )
+
     registry.register(
         name="web_scrape",
         description=DESCRIPTION,
         parameters_schema=PARAMETERS_SCHEMA,
-        handler=execute_web_scrape,
+        handler=handler,
         run_in_executor=True,
     )

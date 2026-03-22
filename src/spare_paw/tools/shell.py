@@ -106,12 +106,23 @@ def execute_shell(
 
 def register(registry: ToolRegistry, config: dict[str, Any]) -> None:
     """Register the ``shell`` tool with *registry*."""
-    # Use the top-level execute_shell directly — closures can't be
-    # pickled for ProcessPoolExecutor.
+    import functools
+
+    tool_cfg = config.get("tools", {}).get("shell", {})
+    default_timeout = tool_cfg.get("timeout_seconds", 30)
+    max_output = tool_cfg.get("max_output_chars", 10_000)
+
+    # Update the schema default to reflect config
+    PARAMETERS_SCHEMA["properties"]["timeout"]["default"] = default_timeout
+
+    handler = functools.partial(
+        execute_shell, timeout=default_timeout, max_output_chars=max_output,
+    )
+
     registry.register(
         name="shell",
         description=_get_description(),
         parameters_schema=PARAMETERS_SCHEMA,
-        handler=execute_shell,
+        handler=handler,
         run_in_executor=True,
     )

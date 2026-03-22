@@ -229,9 +229,8 @@ async def test_single_agent_group():
 
 @pytest.mark.asyncio
 async def test_agent_types_dict_exists():
-    """AGENT_TYPES is defined and has expected keys."""
-    assert hasattr(subagent_mod, "AGENT_TYPES"), "AGENT_TYPES dict must exist"
-    agent_types = subagent_mod.AGENT_TYPES
+    """_get_agent_types returns built-in agent types."""
+    agent_types = subagent_mod._get_agent_types()
 
     assert isinstance(agent_types, dict)
     for key in ("researcher", "coder", "analyst"):
@@ -262,7 +261,7 @@ async def test_spawn_with_agent_type():
     # _run_agent should have been called with the researcher's tools filter
     call_args = mock_run.call_args
     tools_filter = call_args[0][4] if len(call_args[0]) > 4 else call_args[1].get("tools_filter")
-    expected_tools = subagent_mod.AGENT_TYPES["researcher"]["tools"]
+    expected_tools = subagent_mod._get_agent_types()["researcher"]["tools"]
     assert tools_filter == expected_tools, (
         f"Expected tools filter {expected_tools}, got {tools_filter}"
     )
@@ -451,8 +450,8 @@ def test_agents_cannot_use_send_message_or_send_file():
 # ---------------------------------------------------------------------------
 
 def test_agent_types_have_tool_limits():
-    """Each AGENT_TYPES entry must have a tool_limits dict."""
-    for key, archetype in subagent_mod.AGENT_TYPES.items():
+    """Each built-in agent type must have a tool_limits dict."""
+    for key, archetype in subagent_mod._get_agent_types().items():
         assert "tool_limits" in archetype, f"AGENT_TYPES['{key}'] missing 'tool_limits'"
         assert isinstance(archetype["tool_limits"], dict)
 
@@ -486,7 +485,8 @@ async def test_run_agent_forwards_tool_limits_to_tool_loop():
 
 @pytest.mark.asyncio
 async def test_default_agent_limits_when_no_type():
-    """Spawn without agent_type uses _DEFAULT_AGENT_LIMITS."""
+    """Spawn without agent_type uses default agent limits from config."""
+    from spare_paw.config import config as cfg
     app_state = _make_app_state()
 
     with patch.object(subagent_mod, "_run_agent", side_effect=_noop_run_agent) as mock_run:
@@ -494,8 +494,38 @@ async def test_default_agent_limits_when_no_type():
 
     call_args = mock_run.call_args
     tool_limits = call_args[1].get("tool_limits") if call_args[1] else None
-    assert tool_limits == subagent_mod._DEFAULT_AGENT_LIMITS
+    expected = cfg.get("agent.default_agent_limits", {"shell": 15, "web_search": 5})
+    assert tool_limits == expected
     await asyncio.sleep(0)
+
+
+def test_custom_agent_type_from_config():
+    """Custom agent types added via config are merged with builtins."""
+    from spare_paw.config import config as cfg
+    cfg.set_override("agent.types.writer", {
+        "system_suffix": "You are a writer.",
+        "tools": ["files"],
+        "tool_limits": {"shell": 5},
+    })
+    try:
+        types = subagent_mod._get_agent_types()
+        assert "writer" in types
+        assert types["writer"]["system_suffix"] == "You are a writer."
+        assert "researcher" in types  # builtins still present
+    finally:
+        cfg.set_override("agent.types", {})
+
+
+def test_config_overrides_builtin_agent_type():
+    """Config can override properties of a built-in agent type."""
+    from spare_paw.config import config as cfg
+    cfg.set_override("agent.types.researcher", {"tool_limits": {"shell": 99}})
+    try:
+        types = subagent_mod._get_agent_types()
+        assert types["researcher"]["tool_limits"]["shell"] == 99
+        assert "system_suffix" in types["researcher"]  # other fields preserved
+    finally:
+        cfg.set_override("agent.types", {})
 
 
 # ---------------------------------------------------------------------------

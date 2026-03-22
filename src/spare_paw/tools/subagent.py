@@ -15,14 +15,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from spare_paw.config import resolve_model
+from spare_paw.config import config, resolve_model
 
 logger = logging.getLogger(__name__)
 
 # Active and completed agents
 _agents: dict[str, dict[str, Any]] = {}
-_MAX_CONCURRENT = 3
-_MAX_PER_GROUP = 3  # max agents in a single group/batch
 
 # Reference to the message queue — set by engine.py at startup
 _message_queue: asyncio.Queue | None = None
@@ -30,18 +28,14 @@ _message_queue: asyncio.Queue | None = None
 # Reference to app_state — set during register()
 _app_state: Any | None = None
 
-# Watchdog settings
-_WATCHDOG_INTERVAL = 30  # seconds between scans
-_WATCHDOG_TIMEOUT = 180  # cancel after 3 minutes of inactivity
+# Watchdog background task handle
 _watchdog_task: asyncio.Task | None = None
 
 # ---------------------------------------------------------------------------
-# Agent types / archetypes
+# Agent types / archetypes (hardcoded defaults, merged with config at runtime)
 # ---------------------------------------------------------------------------
 
-_DEFAULT_AGENT_LIMITS: dict[str, int] = {"shell": 15, "web_search": 5}
-
-AGENT_TYPES: dict[str, dict[str, Any]] = {
+_BUILTIN_AGENT_TYPES: dict[str, dict[str, Any]] = {
     "researcher": {
         "system_suffix": (
             "You are a research agent. Search thoroughly, use multiple sources, "
@@ -67,6 +61,20 @@ AGENT_TYPES: dict[str, dict[str, Any]] = {
         "tool_limits": {"shell": 15, "web_search": 5, "tavily_search": 5},
     },
 }
+
+
+def _get_agent_types() -> dict[str, dict[str, Any]]:
+    """Return agent types merged from builtins and config overrides."""
+    custom = config.get("agent.types", {})
+    if not custom:
+        return _BUILTIN_AGENT_TYPES
+    merged = {**_BUILTIN_AGENT_TYPES}
+    for key, val in custom.items():
+        if key in merged:
+            merged[key] = {**merged[key], **val}
+        else:
+            merged[key] = val
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +167,7 @@ async def _watchdog_tick() -> None:
         if last is None:
             continue
         elapsed = (now - last).total_seconds()
-        if elapsed > _WATCHDOG_TIMEOUT:
+        if elapsed > config.get("agent.watchdog_timeout", 180):
             task = info.get("task")
             if task is not None and not task.done():
                 logger.warning(
@@ -172,7 +180,7 @@ async def _watchdog_tick() -> None:
 async def _watchdog_loop() -> None:
     """Background loop that runs _watchdog_tick periodically."""
     while True:
-        await asyncio.sleep(_WATCHDOG_INTERVAL)
+        await asyncio.sleep(config.get("agent.watchdog_interval", 30))
         try:
             await _watchdog_tick()
         except Exception:
@@ -321,32 +329,36 @@ async def _handle_spawn(
 ) -> str:
     """Spawn a background agent."""
     # Check concurrency limit
+    max_concurrent = config.get("agent.max_concurrent", 3)
     running = sum(1 for a in _agents.values() if a["status"] == "running")
-    if running >= _MAX_CONCURRENT:
+    if running >= max_concurrent:
         return json.dumps({
-            "error": f"Max concurrent agents ({_MAX_CONCURRENT}) reached. Wait for one to finish.",
+            "error": f"Max concurrent agents ({max_concurrent}) reached. Wait for one to finish.",
             "running": running,
         })
 
     # Check per-group cap
+    max_per_group = config.get("agent.max_per_group", 3)
     if group_id is not None:
         group_count = sum(1 for a in _agents.values() if a.get("group_id") == group_id)
-        if group_count >= _MAX_PER_GROUP:
+        if group_count >= max_per_group:
             return json.dumps({
                 "status": "group_full",
-                "message": f"Max {_MAX_PER_GROUP} agents per group. Do NOT spawn more — reply to the user now.",
+                "message": f"Max {max_per_group} agents per group. Do NOT spawn more — reply to the user now.",
             })
 
     # Resolve agent type
+    agent_types = _get_agent_types()
+    default_agent_limits = config.get("agent.default_agent_limits", {"shell": 15, "web_search": 5})
     tools_filter = tools
     system_suffix: str | None = None
-    agent_tool_limits: dict[str, int] | None = _DEFAULT_AGENT_LIMITS
-    if agent_type and agent_type in AGENT_TYPES:
-        archetype = AGENT_TYPES[agent_type]
+    agent_tool_limits: dict[str, int] | None = default_agent_limits
+    if agent_type and agent_type in agent_types:
+        archetype = agent_types[agent_type]
         if tools_filter is None:
-            tools_filter = archetype["tools"]
-        system_suffix = archetype["system_suffix"]
-        agent_tool_limits = archetype.get("tool_limits", _DEFAULT_AGENT_LIMITS)
+            tools_filter = archetype.get("tools")
+        system_suffix = archetype.get("system_suffix")
+        agent_tool_limits = archetype.get("tool_limits", default_agent_limits)
 
     # Assign group_id (create new one if not provided)
     resolved_group_id = group_id or str(uuid.uuid4())[:8]
@@ -436,11 +448,11 @@ SPAWN_SCHEMA: dict[str, Any] = {
         },
         "agent_type": {
             "type": "string",
-            "enum": list(AGENT_TYPES.keys()),
             "description": (
-                "Predefined agent archetype: 'researcher' (web search + scraping), "
+                "Agent archetype that sets tools and system prompt. "
+                "Built-in types: 'researcher' (web search + scraping), "
                 "'coder' (shell + files), 'analyst' (data analysis). "
-                "Sets appropriate tools and system prompt automatically."
+                "Custom types can be added via config."
             ),
         },
         "tools": {

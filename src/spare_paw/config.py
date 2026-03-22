@@ -36,6 +36,22 @@ def _build_defaults() -> dict[str, Any]:
         },
         "agent": {
             "max_tool_iterations": 20,
+            "max_concurrent": 3,
+            "max_per_group": 3,
+            "watchdog_timeout": 180,
+            "watchdog_interval": 30,
+            "tool_limits": {
+                "web_scrape": 5,
+                "web_search": 5,
+                "tavily_search": 5,
+                "shell": 20,
+                "spawn_agent": 5,
+            },
+            "default_agent_limits": {
+                "shell": 15,
+                "web_search": 5,
+            },
+            "types": {},
             "system_prompt": (
                 "You are a personal AI assistant running 24/7.\n"
                 "You have access to the local filesystem, shell, web search, and web scraping.\n"
@@ -75,6 +91,12 @@ def _build_defaults() -> dict[str, Any]:
         },
         "mcp": {
             "servers": [],
+        },
+        "openrouter": {
+            "max_retries": 3,
+            "retry_base_delay": 1.0,
+            "retry_max_delay": 30.0,
+            "models_cache_ttl": 3600,
         },
     }
 

@@ -43,7 +43,7 @@ DESCRIPTION = (
     "on the device filesystem. Paths are restricted to configured allowed directories."
 )
 
-MAX_READ_CHARS = 50_000
+_DEFAULT_MAX_READ_CHARS = 50_000
 
 # -- Helpers ---------------------------------------------------------------
 
@@ -86,11 +86,13 @@ async def execute_files(
 
     try:
         if action == "read":
+            from spare_paw.config import config as _cfg
+            max_read = _cfg.get("tools.files.max_read_chars", _DEFAULT_MAX_READ_CHARS)
             with open(path, "r", encoding="utf-8", errors="replace") as f:
-                data = f.read(MAX_READ_CHARS + 1)
-            truncated = len(data) > MAX_READ_CHARS
+                data = f.read(max_read + 1)
+            truncated = len(data) > max_read
             if truncated:
-                data = data[:MAX_READ_CHARS]
+                data = data[:max_read]
             return json.dumps(
                 {"content": data, "truncated": truncated, "path": path}
             )

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from spare_paw.router.tool_loop import DEFAULT_TOOL_LIMITS, ToolEvent, run_tool_loop
+from spare_paw.router.tool_loop import _FALLBACK_TOOL_LIMITS, ToolEvent, run_tool_loop
 
 
 def _text_response(content: str = "done") -> dict:
@@ -163,12 +163,22 @@ class TestOnTokenCallback:
 
 class TestDefaultToolLimits:
     def test_shell_limit(self):
-        assert DEFAULT_TOOL_LIMITS["shell"] == 20
+        assert _FALLBACK_TOOL_LIMITS["shell"] == 20
 
     def test_spawn_agent_limit(self):
-        assert DEFAULT_TOOL_LIMITS["spawn_agent"] == 5
+        assert _FALLBACK_TOOL_LIMITS["spawn_agent"] == 5
 
     def test_web_limits_unchanged(self):
-        assert DEFAULT_TOOL_LIMITS["web_scrape"] == 5
-        assert DEFAULT_TOOL_LIMITS["web_search"] == 5
-        assert DEFAULT_TOOL_LIMITS["tavily_search"] == 5
+        assert _FALLBACK_TOOL_LIMITS["web_scrape"] == 5
+        assert _FALLBACK_TOOL_LIMITS["web_search"] == 5
+        assert _FALLBACK_TOOL_LIMITS["tavily_search"] == 5
+
+    def test_config_overrides_tool_limits(self):
+        """Config values override fallback tool limits."""
+        from spare_paw.config import config
+        config.set_override("agent.tool_limits.shell", 50)
+        try:
+            limits = config.get("agent.tool_limits")
+            assert limits["shell"] == 50
+        finally:
+            config.set_override("agent.tool_limits.shell", 20)

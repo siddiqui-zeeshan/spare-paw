@@ -27,8 +27,7 @@ class ToolEvent:
     result_preview: str | None = None
     iteration: int = 0
 
-# Per-turn (not per-session) call limits. Tools not listed are unlimited.
-DEFAULT_TOOL_LIMITS: dict[str, int] = {
+_FALLBACK_TOOL_LIMITS: dict[str, int] = {
     "web_scrape": 5,
     "web_search": 5,
     "tavily_search": 5,
@@ -81,7 +80,9 @@ async def run_tool_loop(
         *usage_dict* has keys ``prompt_tokens``, ``completion_tokens``, and
         ``total_tokens``.
     """
-    merged = {**DEFAULT_TOOL_LIMITS, **(tool_limits or {})}
+    from spare_paw.config import config
+    defaults = config.get("agent.tool_limits") or _FALLBACK_TOOL_LIMITS
+    merged = {**defaults, **(tool_limits or {})}
     effective_limits: dict[str, int] = {
         k: v for k, v in merged.items() if v is not None
     }
