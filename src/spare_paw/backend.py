@@ -22,6 +22,8 @@ class IncomingMessage:
     text: str | None = None
     image_bytes: bytes | None = None
     image_mime: str = "image/jpeg"
+    video_bytes: bytes | None = None
+    video_mime: str = "video/mp4"
     voice_bytes: bytes | None = None
     caption: str | None = None
     cron_context: str | None = None

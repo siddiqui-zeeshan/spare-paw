@@ -54,6 +54,18 @@ class TestIncomingMessage:
         assert msg2.command_args == []
 
 
+class TestIncomingMessageVideo:
+    def test_video_fields_default(self):
+        msg = IncomingMessage()
+        assert msg.video_bytes is None
+        assert msg.video_mime == "video/mp4"
+
+    def test_video_fields_set(self):
+        msg = IncomingMessage(video_bytes=b"\x00\x01", video_mime="video/webm")
+        assert msg.video_bytes == b"\x00\x01"
+        assert msg.video_mime == "video/webm"
+
+
 class TestMessageBackendProtocol:
     def test_runtime_checkable(self):
         """A class implementing all methods satisfies isinstance check."""
