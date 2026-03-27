@@ -75,8 +75,9 @@ async def test_spawn_creates_agent_entry():
 async def test_spawn_respects_max_concurrent():
     app_state = _make_app_state()
 
-    # Pre-populate _agents with 3 running agents
-    for i in range(3):
+    # Pre-populate _agents up to _MAX_CONCURRENT running agents
+    max_c = subagent_mod._MAX_CONCURRENT
+    for i in range(max_c):
         subagent_mod._agents[f"fake-{i}"] = {
             "name": f"agent-{i}",
             "status": "running",
@@ -84,12 +85,12 @@ async def test_spawn_respects_max_concurrent():
         }
 
     result = json.loads(
-        await subagent_mod._handle_spawn(app_state, name="fourth", prompt="overflow")
+        await subagent_mod._handle_spawn(app_state, name="overflow", prompt="overflow")
     )
 
     assert "error" in result
     assert "Max concurrent" in result["error"]
-    assert result["running"] == 3
+    assert result["running"] == max_c
 
 
 # ---------------------------------------------------------------------------

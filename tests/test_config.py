@@ -235,17 +235,17 @@ class TestResolveModel:
         assert resolve_model(cfg, "coder") == "anthropic/claude-sonnet"
 
     def test_falls_back_to_main_agent(self):
-        """When a role has no default and no override, falls back to main_agent."""
+        """When a role has no specific model, falls back to main_agent."""
         cfg = Config()
         cfg.set_override("models.main_agent", "google/gemini-2.5-pro")
-        # planner has no default in DEFAULTS, so it falls back to main_agent
-        assert resolve_model(cfg, "planner") == "google/gemini-2.5-pro"
+        # Use a role name not in DEFAULTS to test fallback
+        assert resolve_model(cfg, "nonexistent_role") == "google/gemini-2.5-pro"
 
     def test_falls_back_to_default_model(self):
         """When no role-specific or main_agent is set, falls back to DEFAULT_MODEL."""
         cfg = Config()
-        # analyst has no default in DEFAULTS, so falls through to main_agent → DEFAULT_MODEL
-        assert resolve_model(cfg, "analyst") == DEFAULT_MODEL
+        # A role not in DEFAULTS falls through to main_agent → DEFAULT_MODEL
+        assert resolve_model(cfg, "nonexistent_role") == DEFAULT_MODEL
 
     def test_main_agent_reads_directly(self):
         cfg = Config()
@@ -259,9 +259,9 @@ class TestResolveModel:
         assert resolve_model(cfg, "researcher") == "anthropic/claude-sonnet"
 
     def test_coder_has_default(self):
-        """Coder role has its own default (z-ai/glm-5)."""
+        """Coder role has its own default."""
         cfg = Config()
-        assert resolve_model(cfg, "coder") == "z-ai/glm-5"
+        assert resolve_model(cfg, "coder") == "xiaomi/mimo-v2-pro"
 
     def test_all_roles_defined(self):
         expected = {"main_agent", "coder", "planner", "cron", "researcher", "analyst", "summary"}
