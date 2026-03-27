@@ -225,11 +225,17 @@ _watchdog_task: asyncio.Task | None = None
 
 _DEFAULT_AGENT_LIMITS: dict[str, int] = {"shell": 15, "web_search": 5}
 
+_CONSULT_NUDGE = (
+    " If you are unsure about scope, priorities, or direction, use consult_main "
+    "to ask the main agent before proceeding."
+)
+
 AGENT_TYPES: dict[str, dict[str, Any]] = {
     "researcher": {
         "system_suffix": (
             "You are a research agent. Search thoroughly, use multiple sources, "
             "and cite URLs when possible. Focus on finding accurate, up-to-date information."
+            + _CONSULT_NUDGE
         ),
         "tools": ["tavily_search", "web_scrape", "shell", "files"],
         "tool_limits": {"web_search": 10, "tavily_search": 10, "shell": 10},
@@ -238,6 +244,7 @@ AGENT_TYPES: dict[str, dict[str, Any]] = {
         "system_suffix": (
             "You are a coding agent. Write, test, and debug code. "
             "Use the shell to run commands and verify your work."
+            + _CONSULT_NUDGE
         ),
         "tools": ["shell", "files", "code"],
         "tool_limits": {"shell": 30, "web_search": 3},
@@ -246,6 +253,7 @@ AGENT_TYPES: dict[str, dict[str, Any]] = {
         "system_suffix": (
             "You are an analysis agent. Analyze data, produce summaries, "
             "and extract key insights. Be thorough but concise."
+            + _CONSULT_NUDGE
         ),
         "tools": ["files", "shell", "tavily_search"],
         "tool_limits": {"shell": 15, "web_search": 5, "tavily_search": 5},
