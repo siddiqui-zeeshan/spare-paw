@@ -264,5 +264,12 @@ class TestResolveModel:
         assert resolve_model(cfg, "coder") == "xiaomi/mimo-v2-pro"
 
     def test_all_roles_defined(self):
-        expected = {"main_agent", "coder", "planner", "cron", "researcher", "analyst", "summary"}
+        expected = {"main_agent", "coder", "planner", "cron", "researcher", "analyst", "summary", "vision"}
         assert set(MODEL_ROLES) == expected
+
+    def test_vision_role_in_model_roles(self):
+        assert "vision" in MODEL_ROLES
+
+    def test_vision_has_default(self):
+        cfg = Config()
+        assert resolve_model(cfg, "vision") == "google/gemini-3.1-flash-lite-preview"

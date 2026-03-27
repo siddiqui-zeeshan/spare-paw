@@ -18,7 +18,7 @@ CONFIG_DIR = Path.home() / ".spare-paw"
 CONFIG_PATH = CONFIG_DIR / "config.yaml"
 
 DEFAULT_MODEL = "xiaomi/mimo-v2-omni"
-MODEL_ROLES = ("main_agent", "coder", "planner", "cron", "researcher", "analyst", "summary")
+MODEL_ROLES = ("main_agent", "coder", "planner", "cron", "researcher", "analyst", "summary", "vision")
 
 
 def _build_defaults() -> dict[str, Any]:
@@ -33,6 +33,7 @@ def _build_defaults() -> dict[str, Any]:
             "researcher": "minimax/minimax-m2.7",
             "analyst": "minimax/minimax-m2.7",
             "summary": "google/gemini-3.1-flash-lite-preview",
+            "vision": "google/gemini-3.1-flash-lite-preview",
         },
         "context": {
             "max_messages": 64,
