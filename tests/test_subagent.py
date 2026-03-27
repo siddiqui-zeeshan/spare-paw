@@ -1148,3 +1148,31 @@ async def test_on_agent_done_cleans_up_channel():
     await asyncio.sleep(0)
 
     assert agent_id not in subagent_mod._channels
+
+
+# ---------------------------------------------------------------------------
+# Bidirectional dialogue — Channel creation in spawn
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_spawn_creates_dialogue_channel():
+    """_handle_spawn creates a DialogueChannel for the spawned agent."""
+    app_state = _make_app_state()
+    app_state.current_request = "user wants research"
+
+    with patch.object(subagent_mod, "_run_agent", side_effect=_noop_run_agent):
+        result = json.loads(
+            await subagent_mod._handle_spawn(
+                app_state, name="researcher", prompt="find info"
+            )
+        )
+
+    agent_id = result["agent_id"]
+    assert agent_id in subagent_mod._channels
+    channel = subagent_mod._channels[agent_id]
+    assert channel.original_request == "user wants research"
+    assert channel.spawn_prompt == "find info"
+    assert channel.consumer_task is not None
+
+    subagent_mod._cleanup_channel(agent_id)
+    await asyncio.sleep(0)

@@ -103,6 +103,28 @@ class TestProcessMessage:
         backend.send_text.assert_awaited_once_with("Bot reply")
 
     @pytest.mark.asyncio
+    async def test_sets_current_request_on_app_state(self):
+        """process_message stores msg.text on app_state.current_request."""
+        app_state = _make_app_state()
+        backend = _make_backend()
+        msg = IncomingMessage(text="do something complex")
+
+        with patch("spare_paw.core.engine.ctx_module") as mock_ctx, \
+             patch("spare_paw.core.engine.run_tool_loop", new_callable=AsyncMock, return_value="Reply"), \
+             patch("spare_paw.core.engine.build_system_prompt", new_callable=AsyncMock, return_value="sys"), \
+             patch("spare_paw.core.engine.compact_with_retry", new_callable=AsyncMock):
+            mock_ctx.get_or_create_conversation = AsyncMock(return_value="conv-1")
+            mock_ctx.ingest = AsyncMock(return_value="msg-1")
+            mock_ctx.assemble = AsyncMock(return_value=[
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "do something complex"},
+            ])
+
+            await process_message(app_state, msg, backend)
+
+        assert app_state.current_request == "do something complex"
+
+    @pytest.mark.asyncio
     async def test_voice_message(self):
         """Voice message: transcribe bytes, then proceed as text."""
         app_state = _make_app_state()

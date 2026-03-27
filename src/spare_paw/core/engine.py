@@ -92,6 +92,9 @@ async def process_message(
     if not text:
         return
 
+    # Store current request for subagent dialogue channels
+    app_state.current_request = text
+
     # 2. Get or create conversation
     conversation_id = await ctx.get_or_create_conversation()
 

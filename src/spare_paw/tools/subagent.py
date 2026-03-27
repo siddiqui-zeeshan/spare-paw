@@ -501,6 +501,20 @@ async def _handle_spawn(
         "last_activity": datetime.now(timezone.utc),
     }
 
+    # Create dialogue channel
+    original_request = getattr(app_state, "current_request", prompt)
+    channel = DialogueChannel(
+        agent_id=agent_id,
+        original_request=original_request,
+        spawn_prompt=prompt,
+        to_main=asyncio.Queue(),
+    )
+    channel.consumer_task = asyncio.create_task(
+        _dialogue_consumer(channel, app_state),
+        name=f"dialogue-{agent_id}",
+    )
+    _channels[agent_id] = channel
+
     # Launch as background task with done-callback for crash detection
     task = asyncio.create_task(
         _run_agent(
