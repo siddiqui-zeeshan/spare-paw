@@ -41,8 +41,6 @@ A standalone async function `describe_media()` in a new module `core/vision.py`:
 - `media_bytes`: raw image or video bytes
 - `media_mime`: MIME type string (e.g., `image/jpeg`, `video/mp4`)
 - `user_text`: the user's caption or message text (may be None)
-- `semaphore`: `app_state.semaphore` — the existing asyncio.Semaphore from AppState, used to serialize model requests
-
 **Behavior:**
 1. Base64-encode the media bytes into a data URL: `data:{media_mime};base64,{b64}`
 2. Build a single-turn message list:
