@@ -1227,3 +1227,55 @@ def test_consult_main_not_in_global_registry():
 
     schema_names = {s["function"]["name"] for s in registry.get_schemas()}
     assert "consult_main" not in schema_names
+
+
+# ---------------------------------------------------------------------------
+# Bidirectional dialogue — Progress messages during consults
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_consult_updates_progress_message():
+    """Consumer calls _update_progress after resolving a consult."""
+    app_state = _make_app_state()
+    backend = _ProgressBackend()
+    backend.edit_progress = AsyncMock()
+    app_state.backend = backend
+
+    app_state.router_client.chat = AsyncMock(return_value={
+        "choices": [{"message": {"content": "answer"}}],
+    })
+
+    agent_id = "prog-consult"
+    subagent_mod._agents[agent_id] = {
+        "name": "researcher",
+        "status": "running",
+        "progress_message_id": 99,
+        "last_activity": datetime.now(timezone.utc),
+        "created_at": "2026-01-01T00:00:00+00:00",
+    }
+
+    channel = subagent_mod.DialogueChannel(
+        agent_id=agent_id,
+        original_request="req",
+        spawn_prompt="task",
+        to_main=asyncio.Queue(),
+    )
+    channel.consumer_task = asyncio.create_task(
+        subagent_mod._dialogue_consumer(channel, app_state)
+    )
+    subagent_mod._channels[agent_id] = channel
+
+    future = asyncio.get_running_loop().create_future()
+    await channel.to_main.put(("question?", future))
+    await asyncio.wait_for(future, timeout=2.0)
+
+    backend.edit_progress.assert_called_once()
+    call_args = backend.edit_progress.call_args
+    assert "round" in call_args.args[1].lower()
+
+    channel.closed = True
+    channel.consumer_task.cancel()
+    try:
+        await channel.consumer_task
+    except asyncio.CancelledError:
+        pass

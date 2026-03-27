@@ -70,8 +70,24 @@ CONSULT_SYSTEM_PROMPT = (
 
 
 async def _update_progress(channel: DialogueChannel, app_state: Any) -> None:
-    """Edit the agent's progress message to show consult status. Stub until Task 7."""
-    pass
+    """Edit the agent's progress message to show consult status."""
+    agent = _agents.get(channel.agent_id)
+    if agent is None:
+        return
+    msg_id = agent.get("progress_message_id")
+    if msg_id is None:
+        return
+    backend = getattr(app_state, "backend", None)
+    if backend and hasattr(type(backend), "edit_progress"):
+        name = agent.get("name", "agent")
+        try:
+            await backend.edit_progress(
+                msg_id,
+                f"\U0001f4ac {name}: consulting main agent "
+                f"(round {channel.round_count}/{channel.max_rounds})",
+            )
+        except Exception:
+            pass
 
 
 async def _dialogue_consumer(channel: DialogueChannel, app_state: Any) -> None:
