@@ -1176,3 +1176,54 @@ async def test_spawn_creates_dialogue_channel():
 
     subagent_mod._cleanup_channel(agent_id)
     await asyncio.sleep(0)
+
+
+# ---------------------------------------------------------------------------
+# Bidirectional dialogue — consult_main tool injection
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_subagent_has_consult_main_tool():
+    """Subagent's tool schemas include consult_main."""
+    app_state = _make_app_state()
+    app_state.current_request = "user request"
+
+    agent_id = "consult-tool-test"
+    subagent_mod._agents[agent_id] = {
+        "name": "tester",
+        "prompt": "test",
+        "status": "starting",
+        "group_id": "grp",
+        "created_at": "2026-01-01T00:00:00+00:00",
+    }
+
+    captured_tools = []
+
+    async def _capture_tool_loop(*, tools, **kwargs):
+        captured_tools.extend(tools)
+        return ("done", {})
+
+    with patch("spare_paw.router.tool_loop.run_tool_loop", side_effect=_capture_tool_loop):
+        with patch("spare_paw.bot.handler._build_system_prompt", return_value="sys"):
+            await subagent_mod._run_agent(
+                agent_id, "test", app_state,
+                model=None, tools_filter=None, max_iterations=5,
+            )
+
+    tool_names = {t["function"]["name"] for t in captured_tools}
+    assert "consult_main" in tool_names
+
+    if agent_id in subagent_mod._channels:
+        subagent_mod._cleanup_channel(agent_id)
+
+
+def test_consult_main_not_in_global_registry():
+    """consult_main should NOT be in the global tool registry."""
+    from spare_paw.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    app_state = _make_app_state()
+    subagent_mod.register(registry, {}, app_state)
+
+    schema_names = {s["function"]["name"] for s in registry.get_schemas()}
+    assert "consult_main" not in schema_names
