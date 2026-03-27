@@ -87,6 +87,24 @@ async def _dialogue_consumer(channel: DialogueChannel, app_state: Any) -> None:
         logger.info("Dialogue consumer for agent %s cancelled", channel.agent_id[:8])
 
 
+def _cleanup_channel(agent_id: str) -> None:
+    """Tear down a dialogue channel: cancel consumer, resolve pending futures."""
+    channel = _channels.get(agent_id)
+    if channel is None:
+        return
+    channel.closed = True
+    if channel.consumer_task and not channel.consumer_task.done():
+        channel.consumer_task.cancel()
+    while not channel.to_main.empty():
+        try:
+            _, future = channel.to_main.get_nowait()
+            if not future.done():
+                future.set_result("Error: agent terminated, consult cancelled")
+        except asyncio.QueueEmpty:
+            break
+    del _channels[agent_id]
+
+
 _CONSULT_HEARTBEAT_INTERVAL = 15  # seconds
 
 
@@ -254,6 +272,8 @@ def _on_agent_done(agent_id: str, task: asyncio.Task) -> None:
     )
     logger.error("Agent %s crashed (done-callback): %s", agent_id[:8], error_msg)
 
+    _cleanup_channel(agent_id)
+
     group_id = _agents[agent_id].get("group_id")
     if group_id and _check_group_complete(group_id):
         asyncio.create_task(
@@ -397,6 +417,8 @@ async def _run_agent(
 
     finally:
         _agents[agent_id]["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+        _cleanup_channel(agent_id)
 
         # Edit progress message with per-agent status
         progress_msg_id = _agents[agent_id].get("progress_message_id")

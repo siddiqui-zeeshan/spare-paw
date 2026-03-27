@@ -1065,3 +1065,86 @@ async def test_consult_heartbeat_updates_last_activity():
         await asyncio.sleep(0.02)
 
     assert subagent_mod._agents[agent_id]["last_activity"].year > 2020
+
+
+# ---------------------------------------------------------------------------
+# Bidirectional dialogue — Channel cleanup
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_cleanup_channel_resolves_pending_future():
+    """_cleanup_channel resolves pending Futures with error string."""
+    channel = subagent_mod.DialogueChannel(
+        agent_id="cleanup-1",
+        original_request="req",
+        spawn_prompt="task",
+        to_main=asyncio.Queue(),
+    )
+    subagent_mod._channels["cleanup-1"] = channel
+
+    future = asyncio.get_running_loop().create_future()
+    await channel.to_main.put(("question", future))
+
+    subagent_mod._cleanup_channel("cleanup-1")
+
+    assert future.done()
+    assert "terminated" in future.result().lower()
+    assert "cleanup-1" not in subagent_mod._channels
+
+
+@pytest.mark.asyncio
+async def test_cleanup_channel_cancels_consumer():
+    """_cleanup_channel cancels the consumer coroutine."""
+    app_state = _make_app_state()
+    channel = subagent_mod.DialogueChannel(
+        agent_id="cleanup-2",
+        original_request="req",
+        spawn_prompt="task",
+        to_main=asyncio.Queue(),
+    )
+    channel.consumer_task = asyncio.create_task(
+        subagent_mod._dialogue_consumer(channel, app_state)
+    )
+    subagent_mod._channels["cleanup-2"] = channel
+
+    await asyncio.sleep(0)
+
+    subagent_mod._cleanup_channel("cleanup-2")
+
+    assert channel.closed is True
+    await asyncio.sleep(0)
+    assert channel.consumer_task.cancelled() or channel.consumer_task.done()
+
+
+@pytest.mark.asyncio
+async def test_on_agent_done_cleans_up_channel():
+    """_on_agent_done triggers _cleanup_channel when agent has a channel."""
+    agent_id = "done-cleanup"
+    channel = subagent_mod.DialogueChannel(
+        agent_id=agent_id,
+        original_request="req",
+        spawn_prompt="task",
+        to_main=asyncio.Queue(),
+    )
+    subagent_mod._channels[agent_id] = channel
+    subagent_mod._agents[agent_id] = {
+        "name": "agent",
+        "status": "running",
+        "group_id": "grp",
+        "created_at": "2026-01-01T00:00:00+00:00",
+    }
+
+    async def _crash():
+        raise RuntimeError("boom")
+
+    task = asyncio.create_task(_crash(), name=f"agent-{agent_id}")
+    subagent_mod._agents[agent_id]["task"] = task
+    task.add_done_callback(lambda t, aid=agent_id: subagent_mod._on_agent_done(aid, t))
+
+    try:
+        await task
+    except RuntimeError:
+        pass
+    await asyncio.sleep(0)
+
+    assert agent_id not in subagent_mod._channels
