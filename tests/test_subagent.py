@@ -1091,7 +1091,7 @@ async def test_consult_heartbeat_updates_last_activity():
     future = asyncio.get_running_loop().create_future()
 
     with patch.object(subagent_mod, "_CONSULT_HEARTBEAT_INTERVAL", 0.01):
-        hb_task = asyncio.create_task(
+        asyncio.create_task(
             subagent_mod._consult_heartbeat(agent_id, future)
         )
         await asyncio.sleep(0.05)
