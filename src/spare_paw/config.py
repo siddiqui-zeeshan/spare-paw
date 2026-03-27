@@ -17,7 +17,7 @@ from spare_paw.platform import default_allowed_paths, platform_label
 CONFIG_DIR = Path.home() / ".spare-paw"
 CONFIG_PATH = CONFIG_DIR / "config.yaml"
 
-DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
+DEFAULT_MODEL = "xiaomi/mimo-v2-omni"
 MODEL_ROLES = ("main_agent", "coder", "planner", "cron", "researcher", "analyst", "summary")
 
 
@@ -27,7 +27,12 @@ def _build_defaults() -> dict[str, Any]:
     return {
         "models": {
             "main_agent": DEFAULT_MODEL,
-            "coder": "z-ai/glm-5",
+            "coder": "xiaomi/mimo-v2-pro",
+            "planner": "xiaomi/mimo-v2-omni",
+            "cron": "minimax/minimax-m2.7",
+            "researcher": "minimax/minimax-m2.7",
+            "analyst": "minimax/minimax-m2.7",
+            "summary": "google/gemini-3.1-flash-lite-preview",
         },
         "context": {
             "max_messages": 64,

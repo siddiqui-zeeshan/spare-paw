@@ -96,27 +96,41 @@ async def _dialogue_consumer(channel: DialogueChannel, app_state: Any) -> None:
         while not channel.closed:
             question, future = await channel.to_main.get()
 
-            messages: list[dict[str, Any]] = [
-                {"role": "system", "content": CONSULT_SYSTEM_PROMPT},
-                {"role": "user", "content": f"Original request: {channel.original_request}"},
-                {"role": "user", "content": f"Agent task: {channel.spawn_prompt}"},
-            ]
-            for entry in channel.history:
-                messages.append(entry)
-            messages.append({"role": "user", "content": question})
+            try:
+                messages: list[dict[str, Any]] = [
+                    {"role": "system", "content": CONSULT_SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Original request: {channel.original_request}"},
+                    {"role": "user", "content": f"Agent task: {channel.spawn_prompt}"},
+                ]
+                for entry in channel.history:
+                    messages.append(entry)
+                messages.append({"role": "user", "content": question})
 
-            model = resolve_model(app_state.config, "main_agent")
-            response = await app_state.router_client.chat(messages, model)
-            answer = response["choices"][0]["message"].get("content", "")
+                model = resolve_model(app_state.config, "main_agent")
+                response = await app_state.router_client.chat(messages, model)
+                answer = response["choices"][0]["message"].get("content", "")
 
-            channel.history.append({"role": "user", "content": question})
-            channel.history.append({"role": "assistant", "content": answer})
-            channel.round_count += 1
+                channel.history.append({"role": "user", "content": question})
+                channel.history.append({"role": "assistant", "content": answer})
+                channel.round_count += 1
 
-            if not future.done():
-                future.set_result(answer)
+                if not future.done():
+                    future.set_result(answer)
 
-            await _update_progress(channel, app_state)
+                await _update_progress(channel, app_state)
+
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Dialogue consumer LLM call failed for agent %s",
+                    channel.agent_id[:8],
+                )
+                if not future.done():
+                    future.set_result(
+                        "Error: consult failed due to an internal error. "
+                        "Continue with what you have."
+                    )
 
     except asyncio.CancelledError:
         logger.info("Dialogue consumer for agent %s cancelled", channel.agent_id[:8])

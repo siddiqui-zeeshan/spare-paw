@@ -962,6 +962,39 @@ async def test_dialogue_consumer_exits_on_cancel():
     assert consumer.done()
 
 
+@pytest.mark.asyncio
+async def test_dialogue_consumer_resolves_future_on_llm_error():
+    """Consumer resolves Future with error string when LLM call fails."""
+    app_state = _make_app_state()
+    app_state.router_client.chat = AsyncMock(side_effect=RuntimeError("API timeout"))
+
+    channel = subagent_mod.DialogueChannel(
+        agent_id="err-1",
+        original_request="req",
+        spawn_prompt="task",
+        to_main=asyncio.Queue(),
+    )
+
+    consumer = asyncio.create_task(
+        subagent_mod._dialogue_consumer(channel, app_state)
+    )
+
+    future = asyncio.get_running_loop().create_future()
+    await channel.to_main.put(("question?", future))
+
+    result = await asyncio.wait_for(future, timeout=2.0)
+    assert "error" in result.lower()
+    # Consumer should still be alive (not crashed)
+    assert not consumer.done()
+
+    channel.closed = True
+    consumer.cancel()
+    try:
+        await consumer
+    except asyncio.CancelledError:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Bidirectional dialogue — consult_main handler and heartbeat
 # ---------------------------------------------------------------------------
