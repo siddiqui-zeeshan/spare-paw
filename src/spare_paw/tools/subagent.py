@@ -87,6 +87,60 @@ async def _dialogue_consumer(channel: DialogueChannel, app_state: Any) -> None:
         logger.info("Dialogue consumer for agent %s cancelled", channel.agent_id[:8])
 
 
+_CONSULT_HEARTBEAT_INTERVAL = 15  # seconds
+
+
+async def _consult_heartbeat(agent_id: str, future: asyncio.Future) -> None:
+    """Tick last_activity while a consult Future is pending."""
+    try:
+        while not future.done():
+            _agents[agent_id]["last_activity"] = datetime.now(timezone.utc)
+            await asyncio.sleep(_CONSULT_HEARTBEAT_INTERVAL)
+    except asyncio.CancelledError:
+        pass
+
+
+async def _handle_consult(agent_id: str, question: str) -> str:
+    """Handle a consult_main tool call from a subagent."""
+    channel = _channels.get(agent_id)
+    if channel is None:
+        return json.dumps({"error": "No dialogue channel for this agent"})
+
+    if channel.round_count >= channel.max_rounds:
+        return json.dumps({
+            "error": f"Consultation limit reached ({channel.max_rounds}/{channel.max_rounds}). "
+            "Continue with the information you have.",
+        })
+
+    if len(question) > 2000:
+        return json.dumps({
+            "error": f"Question too long ({len(question)} chars, max 2000). "
+            "Summarize before consulting.",
+        })
+
+    if agent_id in _agents:
+        _agents[agent_id]["last_activity"] = datetime.now(timezone.utc)
+
+    future: asyncio.Future = asyncio.get_running_loop().create_future()
+    await channel.to_main.put((question, future))
+
+    hb_task = asyncio.create_task(
+        _consult_heartbeat(agent_id, future),
+        name=f"consult-hb-{agent_id}",
+    )
+
+    try:
+        answer = await future
+    finally:
+        hb_task.cancel()
+        try:
+            await hb_task
+        except asyncio.CancelledError:
+            pass
+
+    return answer
+
+
 # Reference to the message queue — set by engine.py at startup
 _message_queue: asyncio.Queue | None = None
 

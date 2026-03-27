@@ -959,3 +959,109 @@ async def test_dialogue_consumer_exits_on_cancel():
     consumer.cancel()
     await asyncio.sleep(0)
     assert consumer.done()
+
+
+# ---------------------------------------------------------------------------
+# Bidirectional dialogue — consult_main handler and heartbeat
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_consult_main_rejects_after_max_rounds():
+    """consult_main returns error when round_count >= max_rounds."""
+    channel = subagent_mod.DialogueChannel(
+        agent_id="max-1",
+        original_request="req",
+        spawn_prompt="task",
+        to_main=asyncio.Queue(),
+        round_count=5,
+    )
+    subagent_mod._channels["max-1"] = channel
+
+    result = json.loads(
+        await subagent_mod._handle_consult("max-1", "one more question?")
+    )
+    assert "error" in result
+    assert "limit" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_consult_main_rejects_long_question():
+    """consult_main returns error when question exceeds 2000 chars."""
+    channel = subagent_mod.DialogueChannel(
+        agent_id="long-1",
+        original_request="req",
+        spawn_prompt="task",
+        to_main=asyncio.Queue(),
+    )
+    subagent_mod._channels["long-1"] = channel
+
+    result = json.loads(
+        await subagent_mod._handle_consult("long-1", "x" * 2001)
+    )
+    assert "error" in result
+    assert "2000" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_consult_main_full_roundtrip():
+    """consult_main pushes question, consumer resolves, tool returns answer."""
+    app_state = _make_app_state()
+    app_state.router_client.chat = AsyncMock(return_value={
+        "choices": [{"message": {"content": "Use Redis"}}],
+    })
+
+    agent_id = "rt-1"
+    subagent_mod._agents[agent_id] = {
+        "name": "coder",
+        "status": "running",
+        "last_activity": datetime.now(timezone.utc),
+        "created_at": "2026-01-01T00:00:00+00:00",
+    }
+
+    channel = subagent_mod.DialogueChannel(
+        agent_id=agent_id,
+        original_request="build caching layer",
+        spawn_prompt="implement cache",
+        to_main=asyncio.Queue(),
+    )
+    channel.consumer_task = asyncio.create_task(
+        subagent_mod._dialogue_consumer(channel, app_state)
+    )
+    subagent_mod._channels[agent_id] = channel
+
+    result = await asyncio.wait_for(
+        subagent_mod._handle_consult(agent_id, "Redis or memcached?"),
+        timeout=2.0,
+    )
+    assert "Use Redis" in result
+
+    channel.closed = True
+    channel.consumer_task.cancel()
+    try:
+        await channel.consumer_task
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_consult_heartbeat_updates_last_activity():
+    """_consult_heartbeat updates last_activity periodically."""
+    agent_id = "hb-consult"
+    subagent_mod._agents[agent_id] = {
+        "name": "hb",
+        "status": "running",
+        "last_activity": datetime(2020, 1, 1, tzinfo=timezone.utc),
+        "created_at": "2026-01-01T00:00:00+00:00",
+    }
+
+    future = asyncio.get_running_loop().create_future()
+
+    with patch.object(subagent_mod, "_CONSULT_HEARTBEAT_INTERVAL", 0.01):
+        hb_task = asyncio.create_task(
+            subagent_mod._consult_heartbeat(agent_id, future)
+        )
+        await asyncio.sleep(0.05)
+        future.set_result("done")
+        await asyncio.sleep(0.02)
+
+    assert subagent_mod._agents[agent_id]["last_activity"].year > 2020
