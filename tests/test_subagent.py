@@ -1279,3 +1279,56 @@ async def test_consult_updates_progress_message():
         await channel.consumer_task
     except asyncio.CancelledError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Bidirectional dialogue — Integration test
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_integration_spawn_consult_complete():
+    """Full cycle: spawn agent → agent consults main → agent completes → group callback."""
+    from spare_paw.tools.registry import ToolRegistry
+
+    app_state = _make_app_state()
+    app_state.current_request = "analyze our API"
+    app_state.router_client.chat = AsyncMock(return_value={
+        "choices": [{"message": {"content": "Focus on p99 latency"}}],
+    })
+
+    registry = ToolRegistry()
+    app_state.tool_registry = registry
+    subagent_mod.register(registry, {}, app_state)
+
+    queue = asyncio.Queue()
+    original_queue = subagent_mod._message_queue
+    subagent_mod._message_queue = queue
+
+    try:
+        async def _consulting_agent(agent_id, prompt, app_state_, *args, **kwargs):
+            subagent_mod._agents[agent_id]["status"] = "running"
+
+            result = await subagent_mod._handle_consult(agent_id, "What should I focus on?")
+            assert "p99" in result.lower() or "latency" in result.lower()
+
+            subagent_mod._agents[agent_id]["status"] = "completed"
+            subagent_mod._agents[agent_id]["result"] = f"Analysis done. Guidance: {result}"
+            subagent_mod._agents[agent_id]["result_preview"] = f"Analysis done. Guidance: {result}"[:200]
+            subagent_mod._agents[agent_id]["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+        with patch.object(subagent_mod, "_run_agent", side_effect=_consulting_agent):
+            await subagent_mod._handle_spawn(
+                app_state, name="analyst", prompt="analyze API latency",
+                agent_type="analyst",
+            )
+
+            await asyncio.sleep(0.1)
+
+        agents = [a for a in subagent_mod._agents.values() if a["name"] == "analyst"]
+        assert len(agents) == 1
+        assert agents[0]["status"] == "completed"
+
+    finally:
+        subagent_mod._message_queue = original_queue
+        for aid in list(subagent_mod._channels):
+            subagent_mod._cleanup_channel(aid)
