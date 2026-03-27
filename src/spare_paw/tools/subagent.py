@@ -42,6 +42,51 @@ class DialogueChannel:
 # Active dialogue channels keyed by agent_id
 _channels: dict[str, DialogueChannel] = {}
 
+CONSULT_SYSTEM_PROMPT = (
+    "You are the main agent coordinating background agents. A subagent is consulting "
+    "you for guidance. You know the original user request and what this agent was "
+    "tasked with. Answer concisely and directly. If the agent is on the wrong track, "
+    "redirect it. If it needs information you don't have, say so."
+)
+
+
+async def _update_progress(channel: DialogueChannel, app_state: Any) -> None:
+    """Edit the agent's progress message to show consult status. Stub until Task 7."""
+    pass
+
+
+async def _dialogue_consumer(channel: DialogueChannel, app_state: Any) -> None:
+    """Consumer coroutine: receives questions from subagent, calls main-agent LLM, resolves Futures."""
+    try:
+        while not channel.closed:
+            question, future = await channel.to_main.get()
+
+            messages: list[dict[str, Any]] = [
+                {"role": "system", "content": CONSULT_SYSTEM_PROMPT},
+                {"role": "user", "content": f"Original request: {channel.original_request}"},
+                {"role": "user", "content": f"Agent task: {channel.spawn_prompt}"},
+            ]
+            for entry in channel.history:
+                messages.append(entry)
+            messages.append({"role": "user", "content": question})
+
+            model = resolve_model(app_state.config, "main_agent")
+            response = await app_state.router_client.chat(messages, model)
+            answer = response["choices"][0]["message"].get("content", "")
+
+            channel.history.append({"role": "user", "content": question})
+            channel.history.append({"role": "assistant", "content": answer})
+            channel.round_count += 1
+
+            if not future.done():
+                future.set_result(answer)
+
+            await _update_progress(channel, app_state)
+
+    except asyncio.CancelledError:
+        logger.info("Dialogue consumer for agent %s cancelled", channel.agent_id[:8])
+
+
 # Reference to the message queue — set by engine.py at startup
 _message_queue: asyncio.Queue | None = None
 
