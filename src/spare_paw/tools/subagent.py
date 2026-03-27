@@ -13,11 +13,30 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
+from collections.abc import Callable
 from typing import Any
 
 from dataclasses import dataclass, field
 
 from spare_paw.config import resolve_model
+
+
+class _AgentToolRegistry:
+    """Thin wrapper that intercepts consult_main and delegates everything else."""
+
+    def __init__(self, real_registry: Any, consult_handler: Callable) -> None:
+        self._real = real_registry
+        self._consult_handler = consult_handler
+
+    async def execute(
+        self, name: str, arguments: dict[str, Any], executor: Any = None
+    ) -> str:
+        if name == "consult_main":
+            return await self._consult_handler(**arguments)
+        return await self._real.execute(name, arguments, executor)
+
+    def get_schemas(self) -> list[dict[str, Any]]:
+        return self._real.get_schemas()
 
 logger = logging.getLogger(__name__)
 
@@ -374,6 +393,34 @@ async def _run_agent(
             if s.get("function", {}).get("name") not in _agent_tools
         ]
 
+        # Inject consult_main tool (subagent-only, not in global registry)
+        async def _consult_handler(question: str) -> str:
+            return await _handle_consult(agent_id, question)
+
+        consult_schema = {
+            "type": "function",
+            "function": {
+                "name": "consult_main",
+                "description": (
+                    "Consult the main agent for clarification, guidance, or to share partial results. "
+                    "Use when you need direction, hit ambiguity, or want to confirm your approach. "
+                    "Keep questions concise (under 2000 chars). You have up to 5 consultation rounds."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "Your question or partial results for the main agent. Must be under 2000 characters.",
+                        },
+                    },
+                    "required": ["question"],
+                },
+            },
+        }
+        tool_schemas.append(consult_schema)
+        agent_registry = _AgentToolRegistry(app_state.tool_registry, _consult_handler)
+
         # Build messages
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -390,7 +437,7 @@ async def _run_agent(
             messages=messages,
             model=resolved_model,
             tools=tool_schemas,
-            tool_registry=app_state.tool_registry,
+            tool_registry=agent_registry,
             max_iterations=max_iterations,
             executor=app_state.executor,
             track_usage=True,
