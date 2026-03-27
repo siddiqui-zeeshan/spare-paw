@@ -899,3 +899,63 @@ def test_channels_registry_exists():
     """Module-level _channels dict exists."""
     assert hasattr(subagent_mod, "_channels")
     assert isinstance(subagent_mod._channels, dict)
+
+
+# ---------------------------------------------------------------------------
+# Bidirectional dialogue — Consumer coroutine
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dialogue_consumer_resolves_future():
+    """Consumer picks up a question, calls LLM, resolves the Future."""
+    app_state = _make_app_state()
+    app_state.router_client.chat = AsyncMock(return_value={
+        "choices": [{"message": {"content": "The answer is 42"}}],
+    })
+
+    channel = subagent_mod.DialogueChannel(
+        agent_id="cons-1",
+        original_request="original user request",
+        spawn_prompt="research task",
+        to_main=asyncio.Queue(),
+    )
+
+    consumer = asyncio.create_task(
+        subagent_mod._dialogue_consumer(channel, app_state)
+    )
+
+    future = asyncio.get_running_loop().create_future()
+    await channel.to_main.put(("What is the meaning?", future))
+
+    result = await asyncio.wait_for(future, timeout=2.0)
+    assert result == "The answer is 42"
+    assert channel.round_count == 1
+    assert len(channel.history) == 2
+
+    channel.closed = True
+    consumer.cancel()
+    try:
+        await consumer
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_dialogue_consumer_exits_on_cancel():
+    """Consumer coroutine exits cleanly when cancelled."""
+    app_state = _make_app_state()
+    channel = subagent_mod.DialogueChannel(
+        agent_id="cons-2",
+        original_request="req",
+        spawn_prompt="task",
+        to_main=asyncio.Queue(),
+    )
+
+    consumer = asyncio.create_task(
+        subagent_mod._dialogue_consumer(channel, app_state)
+    )
+    await asyncio.sleep(0)
+
+    consumer.cancel()
+    await asyncio.sleep(0)
+    assert consumer.done()
