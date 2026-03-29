@@ -65,4 +65,14 @@ async def build_system_prompt(config: Any) -> str:
     except Exception:
         logger.debug("Failed to load memories for system prompt", exc_info=True)
 
+    # Inject knowledge from dream consolidation
+    try:
+        from spare_paw.tools.dream import get_knowledge_for_context
+
+        knowledge = get_knowledge_for_context(max_tokens=2000)
+        if knowledge:
+            sections.append(knowledge)
+    except Exception:
+        logger.debug("Failed to load knowledge for system prompt", exc_info=True)
+
     return "\n\n".join(sections)
