@@ -14,6 +14,7 @@ A 24/7 personal AI agent accessible through Telegram. Runs on macOS, Linux, Wind
 - **Full-text search** -- FTS5-backed search across all conversation history
 - **DAG-based lossless context management (LCM)** -- when conversation history grows beyond the fresh tail (32 messages), older messages are automatically summarized into leaf nodes (~8 messages each); when 4+ leaves accumulate they condense into higher-level summaries. Every original message is preserved and searchable. Summaries are assembled between the system prompt and fresh messages so the LLM retains awareness of older context. Compaction uses a cheap configurable model (default `google/gemini-3.1-flash-lite`) to keep costs low
 - **LCM tools** -- `lcm_grep` (search raw messages and compressed summaries via FTS5), `lcm_expand` (drill into a summary to recover original messages, token-capped), `lcm_describe` (get summaries for a time range)
+- **Dream memory consolidation** -- a nightly cron (3:00 AM, auto-created on first startup) reviews recent conversations and extracts key facts into topic-based knowledge files at `~/.spare-paw/knowledge/`. Organizes knowledge into `user-preferences.md`, `active-projects.md`, `workflows.md`, `people.md`, `tech-stack.md`, etc. Contradicted facts are automatically updated, relative dates converted to absolute. Knowledge is selectively injected into the system prompt based on relevance, keeping context lean
 - **Sliding window context** -- token-budgeted context assembly with configurable window size and safety margin
 - **Message queue with backpressure** -- incoming messages queue while the bot is busy; typing indicator signals processing
 - **Heartbeat watchdog** -- detects event loop starvation and deadlocks, not just process crashes
@@ -136,7 +137,7 @@ models:
   cron: "google/gemini-2.0-flash"                    # used for cron job execution
   researcher: "google/gemini-2.0-flash"              # used by researcher subagents
   analyst: "google/gemini-2.0-flash"                 # used by analyst subagents
-  summary: "google/gemini-3.1-flash-lite"            # used for LCM context summaries
+  summary: "google/gemini-3.1-flash-lite"            # used for LCM context summaries and dream consolidation
   vision: "google/gemini-3.1-flash-lite-preview"     # used for image/video preprocessing
 ```
 
@@ -150,6 +151,8 @@ context:
   leaf_chunk_size: 8
   condensed_min_fanout: 4
 ```
+
+Dream consolidation uses the `summary` model role for cost efficiency. The nightly cron is auto-created on first startup; no additional configuration is needed.
 
 ### Webhook backend
 
@@ -313,6 +316,24 @@ All tools are exposed to the LLM as callable functions. Blocking tools run in a 
 | `lcm_grep` | Search raw messages and compressed summaries | FTS5 full-text search across history and DAG summaries |
 | `lcm_expand` | Drill into a summary node | Recovers original messages under a summary, token-capped |
 | `lcm_describe` | Get summaries for a time range | Returns DAG summary nodes covering the specified period |
+| `dream_consolidate` | Manually trigger dream consolidation | Normally runs via nightly cron |
+| `list_knowledge` | Show the knowledge index and available topic files | Lists all topic files under `~/.spare-paw/knowledge/` |
+
+## Dream Memory Consolidation
+
+A nightly cron job (3:00 AM, auto-created on first startup) reviews recent conversations and extracts key facts into topic-based knowledge files stored at `~/.spare-paw/knowledge/`. Each topic gets its own Markdown file:
+
+- `user-preferences.md` -- personal preferences, habits, communication style
+- `active-projects.md` -- current projects, goals, status
+- `workflows.md` -- recurring procedures and preferred approaches
+- `people.md` -- people mentioned in conversations, relationships, context
+- `tech-stack.md` -- languages, frameworks, tools, infrastructure
+
+When a new fact contradicts an existing entry, the old entry is automatically updated. Relative dates (e.g. "next Tuesday") are converted to absolute dates at consolidation time.
+
+At prompt assembly, the system selectively injects only the knowledge files relevant to the current conversation, keeping the context window lean. Use `dream_consolidate` to trigger consolidation manually or `list_knowledge` to inspect the current knowledge index.
+
+Dream consolidation uses the `summary` model role (default `google/gemini-3.1-flash-lite`) for cost efficiency.
 
 ## MCP (Model Context Protocol)
 
@@ -526,6 +547,7 @@ src/spare_paw/
     web_scrape.py    # URL fetch + parsing
     cron_tools.py    # Cron CRUD tools (create, edit, delete, list)
     lcm_tools.py     # LCM tools (lcm_grep, lcm_expand, lcm_describe)
+    dream.py         # Dream consolidation (nightly knowledge extraction)
   cron/
     scheduler.py     # APScheduler setup
     executor.py      # Cron job execution

@@ -7,6 +7,7 @@ memory — they are fire-and-forget messages to the owner.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -40,6 +41,29 @@ async def execute_cron(
         6. Update cron_jobs row with last_run_at and last_result/last_error.
     """
     now = datetime.now(timezone.utc).isoformat()
+
+    # Check if this is a dream cron — handle it directly without the full tool loop
+    try:
+        db = await get_db()
+        cursor = await db.execute(
+            "SELECT metadata FROM cron_jobs WHERE id = ?", (cron_id,)
+        )
+        row = await cursor.fetchone()
+        metadata_str = row["metadata"] if row else None
+        metadata = json.loads(metadata_str) if metadata_str else {}
+        if metadata.get("dream"):
+            from spare_paw.tools.dream import run_dream
+
+            result = await run_dream(app_state)
+            # Send result notification
+            backend = getattr(app_state, "backend", None)
+            if backend is not None:
+                await backend.send_text(result)
+            await _update_cron_result(cron_id, now, result=result)
+            logger.info("Dream cron %s executed successfully", cron_id)
+            return
+    except Exception as exc:
+        logger.debug("Dream cron check failed for %s: %s", cron_id, exc, exc_info=True)
 
     try:
         # 1. Resolve model (per-job override → cron role → main_agent)
@@ -157,7 +181,6 @@ async def _maybe_delete_once(app_state: Any, cron_id: str) -> None:
         )
         row = await cursor.fetchone()
         if row and row["metadata"]:
-            import json
             meta = json.loads(row["metadata"])
             if meta.get("once"):
                 await db.execute("DELETE FROM cron_jobs WHERE id = ?", (cron_id,))

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from spare_paw.config import Config, config
-from spare_paw.db import close_db, init_db
+from spare_paw.db import close_db, get_db, init_db
 from spare_paw.util.redact import redact_secrets
 
 logger = logging.getLogger(__name__)
@@ -176,6 +176,9 @@ async def init_app_state() -> AppState:
     register_meta_tools(tool_registry, config_data, state)
     subagent.register(tool_registry, config_data, state)
     lcm_tools.register(tool_registry, config_data)
+
+    from spare_paw.tools import dream as dream_mod
+    dream_mod.register(tool_registry, config_data, state)
 
     # Inline read_logs tool
     async def _read_logs(count: int = 50) -> str:
@@ -346,6 +349,34 @@ async def _async_main() -> None:
         logger.info("Cron scheduler initialized")
     except ImportError:
         logger.warning("cron.scheduler not yet implemented; skipping cron init")
+
+    # Auto-create dream consolidation cron if none exists
+    try:
+        from spare_paw.tools.dream import ensure_knowledge_dir, DREAM_CRON_NAME
+        import uuid
+
+        ensure_knowledge_dir()
+        db = await get_db()
+        async with db.execute(
+            "SELECT id FROM cron_jobs WHERE name = ?", (DREAM_CRON_NAME,)
+        ) as cur:
+            existing = await cur.fetchone()
+        if not existing:
+            dream_id = uuid.uuid4().hex[:8]
+            now = datetime.now(timezone.utc).isoformat()
+            await db.execute(
+                """INSERT INTO cron_jobs (id, name, schedule, prompt, model, enabled, created_at, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (dream_id, DREAM_CRON_NAME, "0 3 * * *",
+                 "Run dream consolidation to organize knowledge from recent conversations.",
+                 None, 1, now, '{"once": false, "dream": true}'),
+            )
+            await db.commit()
+            if app_state.scheduler:
+                await app_state.scheduler.add_job(dream_id, "0 3 * * *")
+            logger.info("Auto-created dream consolidation cron (3:00 AM daily)")
+    except Exception:
+        logger.debug("Dream cron setup skipped", exc_info=True)
 
     # 13. Start heartbeat
     heartbeat_task = asyncio.create_task(_heartbeat(), name="heartbeat")
