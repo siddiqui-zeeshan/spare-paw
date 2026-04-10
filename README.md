@@ -1,11 +1,11 @@
 # spare-paw
 
-A 24/7 personal AI agent accessible through Telegram. Runs on macOS, Linux, Windows, Android (Termux), or Docker. Features role-based model selection via OpenRouter (8 roles with fallback chain), DAG-based lossless context management, shell and filesystem tools, scheduled tasks, voice transcription, video preprocessing, and full-text search over conversation history. Cold starts in ~1 second.
+A 24/7 personal AI agent accessible through Telegram. Runs on macOS, Linux, Windows, Android (Termux), or Docker. Features role-based model selection via OpenRouter (8 roles with fallback chain), DAG-based lossless context management, shell and filesystem tools, browser automation, scheduled tasks, voice transcription, video preprocessing, and full-text search over conversation history. Cold starts in ~1 second.
 
 ## Features
 
 - **Role-based model selection** -- 8 model roles (main_agent, coder, planner, cron, researcher, analyst, summary, vision) each independently configurable via OpenRouter; fallback chain: role-specific model -> main_agent -> google/gemini-2.0-flash
-- **Tool use** -- shell commands, file operations, web search, web scraping, cron management; all exposed as LLM function calls
+- **Tool use** -- shell commands, file operations, web search, web scraping, browser automation, cron management; all exposed as LLM function calls
 - **Scheduled tasks (cron)** -- create, edit, pause, resume, and manage recurring AI tasks with per-cron model selection
 - **One-shot reminders** -- ask the bot to remind you of something in X minutes/hours; it creates a cron that fires once and auto-deletes itself (e.g. "remind me to call John in 30 minutes")
 - **Photo/image and video support** -- send photos and videos via Telegram; images and videos are preprocessed through a vision-capable model (configurable via `models.vision`, defaults to `google/gemini-3.1-flash-lite-preview`) to generate text descriptions. The main agent receives text summaries instead of raw media, reducing token costs while preserving semantic content. Captions are used as the prompt (defaults to "What do you see in this image/video?")
@@ -30,6 +30,7 @@ A 24/7 personal AI agent accessible through Telegram. Runs on macOS, Linux, Wind
 - Python 3.11+
 - API keys: OpenRouter (required), Telegram Bot Token (required), Tavily (optional, for web search), Groq (optional, for voice)
 - Node.js (optional, for MCP servers that use `npx`)
+- Chromium (optional, for browser automation tools)
 
 ## Quick Start
 
@@ -294,6 +295,14 @@ All tools are exposed to the LLM as callable functions. Blocking tools run in a 
 | `files` | Read, write, append, list, delete files | Restricted to `allowed_paths` in config; defaults set per platform |
 | `tavily_search` | Web search via Tavily API | Optional; requires Tavily API key |
 | `web_scrape` | Fetch and extract content from a URL | BeautifulSoup parsing, 15s timeout, 20K char limit |
+| `browser_navigate` | Navigate to a URL | Returns page title + text snippet |
+| `browser_click` | Click an element by CSS selector | |
+| `browser_type` | Type into an input field | |
+| `browser_screenshot` | Take a screenshot of the page | |
+| `browser_get_text` | Get visible text from the page | Optionally scoped by CSS selector |
+| `browser_eval_js` | Evaluate JavaScript in the page | |
+| `browser_get_elements` | List matching elements with attributes | By CSS selector |
+| `browser_wait` | Wait for an element to appear | |
 | `cron_create` | Create a scheduled task | Accepts name, cron expression, prompt, optional model |
 | `cron_edit` | Edit an existing scheduled task | Update name, schedule, prompt, and/or model by cron ID |
 | `cron_delete` | Delete a scheduled task | By cron ID |
@@ -324,6 +333,15 @@ Each server is launched as a subprocess using stdio transport. The `/mcp` Telegr
 ### Dependency
 
 MCP support requires `mcp>=1.26.0`, included in the package dependencies.
+
+## Browser Automation
+
+8 browser tools give the LLM full control of a headless Chromium instance via CDP (Chrome DevTools Protocol) over raw websockets. No Playwright or Selenium dependency — the implementation talks CDP directly.
+
+- **Lazy launch** -- Chromium is started on the first `browser_*` call and reuses the same instance across tool calls within a conversation
+- **Navigate, interact, extract** -- `browser_navigate`, `browser_click`, `browser_type`, `browser_get_text`, `browser_get_elements`, `browser_eval_js`
+- **Visual feedback** -- `browser_screenshot` returns a page screenshot; `browser_wait` blocks until a selector appears
+- **Requirement** -- `chromium-browser` (or equivalent) must be installed on the system (`pkg install chromium` on Termux, `brew install --cask chromium` on macOS)
 
 ## GitHub Integration
 
@@ -424,7 +442,7 @@ Context Manager (SQLite + FTS5 + DAG-based lossless context management)
 Model Router (OpenRouter API, role-based selection, semaphore-serialized, retry with backoff)
   |
   v
-Tools (ProcessPoolExecutor: shell, files, web search, web scrape, cron, vision)
+Tools (ProcessPoolExecutor: shell, files, web search, web scrape, browser, cron, vision)
   |                         \
   |                          MCP Client (connects to external MCP servers)
   |

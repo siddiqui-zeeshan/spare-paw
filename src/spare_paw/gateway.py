@@ -161,11 +161,12 @@ async def init_app_state() -> AppState:
     # Register tools
     config_data = config.data
 
-    from spare_paw.tools import code, cron_tools, files, lcm_tools, memory, shell, subagent, tavily_search, web_scrape
+    from spare_paw.tools import browser, code, cron_tools, files, lcm_tools, memory, shell, subagent, tavily_search, web_scrape
     from spare_paw.tools.custom_tools import load_custom_tools, register_meta_tools
 
     shell.register(tool_registry, config_data)
     files.register(tool_registry, config_data)
+    browser.register(tool_registry, config_data)
     tavily_search.register(tool_registry, config_data)
     web_scrape.register(tool_registry, config_data)
     cron_tools.register(tool_registry, config_data, state)
@@ -390,6 +391,10 @@ async def _async_main() -> None:
         await heartbeat_task
     except asyncio.CancelledError:
         pass
+
+    # Close browser session
+    from spare_paw.tools import browser as _browser_mod
+    await _browser_mod.shutdown()
 
     # Stop cron scheduler
     if app_state.scheduler is not None:

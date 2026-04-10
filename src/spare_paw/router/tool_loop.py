@@ -34,6 +34,11 @@ DEFAULT_TOOL_LIMITS: dict[str, int] = {
     "tavily_search": 5,
     "shell": 20,
     "spawn_agent": 5,
+    "browser_navigate": 10,
+    "browser_click": 20,
+    "browser_type": 20,
+    "browser_screenshot": 5,
+    "browser_eval_js": 10,
 }
 
 

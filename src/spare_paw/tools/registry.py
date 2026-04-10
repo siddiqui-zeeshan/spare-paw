@@ -163,7 +163,13 @@ class ToolRegistry:
         enabled: list[str] = []
         for name in self._tools:
             # cron_create / cron_delete / cron_list share the "cron" key
-            cfg_key = "cron" if name.startswith("cron_") else name
+            # browser_navigate / browser_click / ... share the "browser" key
+            if name.startswith("cron_"):
+                cfg_key = "cron"
+            elif name.startswith("browser_"):
+                cfg_key = "browser"
+            else:
+                cfg_key = name
             tool_cfg = tools_cfg.get(cfg_key, {})
             if tool_cfg.get("enabled", True):
                 enabled.append(name)
