@@ -234,11 +234,17 @@ AGENT_TYPES: dict[str, dict[str, Any]] = {
     "researcher": {
         "system_suffix": (
             "You are a research agent. Search thoroughly, use multiple sources, "
-            "and cite URLs when possible. Focus on finding accurate, up-to-date information."
+            "and cite URLs when possible. Focus on finding accurate, up-to-date information. "
+            "Use browser tools for pages that need JavaScript rendering or interaction."
             + _CONSULT_NUDGE
         ),
-        "tools": ["tavily_search", "web_scrape", "shell", "files"],
-        "tool_limits": {"web_search": 10, "tavily_search": 10, "shell": 10},
+        "tools": [
+            "tavily_search", "web_scrape", "shell", "files",
+            "browser_navigate", "browser_click", "browser_type",
+            "browser_screenshot", "browser_get_text", "browser_eval_js",
+            "browser_get_elements", "browser_wait",
+        ],
+        "tool_limits": {"web_search": 10, "tavily_search": 10, "shell": 10, "browser_navigate": 10},
     },
     "coder": {
         "system_suffix": (
@@ -246,8 +252,8 @@ AGENT_TYPES: dict[str, dict[str, Any]] = {
             "Use the shell to run commands and verify your work."
             + _CONSULT_NUDGE
         ),
-        "tools": ["shell", "files", "code"],
-        "tool_limits": {"shell": 30, "web_search": 3},
+        "tools": ["shell", "files", "code", "web_scrape", "tavily_search"],
+        "tool_limits": {"shell": 30, "web_search": 5, "tavily_search": 5},
     },
     "analyst": {
         "system_suffix": (
@@ -255,8 +261,24 @@ AGENT_TYPES: dict[str, dict[str, Any]] = {
             "and extract key insights. Be thorough but concise."
             + _CONSULT_NUDGE
         ),
-        "tools": ["files", "shell", "tavily_search"],
+        "tools": ["files", "shell", "tavily_search", "web_scrape"],
         "tool_limits": {"shell": 15, "web_search": 5, "tavily_search": 5},
+    },
+    "browser": {
+        "system_suffix": (
+            "You are a browser automation agent. Navigate websites, fill forms, "
+            "interact with pages, and extract data using the browser tools. "
+            "Use browser_get_elements to discover page structure before clicking or typing. "
+            "Use browser_wait after actions that trigger dynamic content loading."
+            + _CONSULT_NUDGE
+        ),
+        "tools": [
+            "browser_navigate", "browser_click", "browser_type",
+            "browser_screenshot", "browser_get_text", "browser_eval_js",
+            "browser_get_elements", "browser_wait",
+            "files", "shell",
+        ],
+        "tool_limits": {"browser_navigate": 15, "browser_click": 30, "browser_type": 20, "shell": 10},
     },
 }
 
@@ -676,8 +698,9 @@ SPAWN_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": list(AGENT_TYPES.keys()),
             "description": (
-                "Predefined agent archetype: 'researcher' (web search + scraping), "
-                "'coder' (shell + files), 'analyst' (data analysis). "
+                "Predefined agent archetype: 'researcher' (web search + scraping + browser), "
+                "'coder' (shell + files + code + web), 'analyst' (data analysis), "
+                "'browser' (full browser automation). "
                 "Sets appropriate tools and system prompt automatically."
             ),
         },
