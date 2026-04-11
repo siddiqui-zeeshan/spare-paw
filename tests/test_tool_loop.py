@@ -150,6 +150,44 @@ class TestTokenBudgetCircuitBreaker:
         assert result == "Final answer"
 
 
+class TestMissingChoices:
+    @pytest.mark.asyncio
+    async def test_missing_choices_returns_error(self):
+        """LLM response without 'choices' key returns error instead of crashing."""
+        client = AsyncMock()
+        client.chat = AsyncMock(return_value={"usage": {"prompt_tokens": 10, "completion_tokens": 0, "total_tokens": 10}})
+
+        registry = AsyncMock()
+
+        result = await run_tool_loop(
+            client=client,
+            messages=[{"role": "user", "content": "test"}],
+            model="test-model",
+            tools=[],
+            tool_registry=registry,
+        )
+
+        assert "invalid response" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_empty_choices_returns_error(self):
+        """LLM response with empty choices list returns error instead of crashing."""
+        client = AsyncMock()
+        client.chat = AsyncMock(return_value={"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 0, "total_tokens": 10}})
+
+        registry = AsyncMock()
+
+        result = await run_tool_loop(
+            client=client,
+            messages=[{"role": "user", "content": "test"}],
+            model="test-model",
+            tools=[],
+            tool_registry=registry,
+        )
+
+        assert "invalid response" in result.lower()
+
+
 class TestStructuredLogging:
     @pytest.mark.asyncio
     async def test_logs_contain_structured_fields(self, caplog):

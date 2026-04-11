@@ -166,7 +166,16 @@ async def run_tool_loop(
         if on_event is not None:
             on_event(ToolEvent(kind="llm_end", iteration=iteration))
 
-        choice = response["choices"][0]
+        choices = response.get("choices")
+        if not choices:
+            logger.error(
+                "Iteration %d: LLM response missing 'choices': %s",
+                iteration, json.dumps(response)[:300],
+            )
+            return _maybe_with_usage(
+                "LLM returned an invalid response (no choices). Try again."
+            )
+        choice = choices[0]
         assistant_message = choice["message"]
 
         # Check for tool calls
@@ -319,10 +328,11 @@ async def run_tool_loop(
     try:
         response = await client.chat(messages, model)
         _accumulate_usage(response)
-        choice = response["choices"][0]
-        content = choice["message"].get("content", "")
-        if content:
-            return _maybe_with_usage(content)
+        choices = response.get("choices")
+        if choices:
+            content = choices[0]["message"].get("content", "")
+            if content:
+                return _maybe_with_usage(content)
     except Exception as exc:
         logger.error("Final call after max iterations failed: %s", exc)
 
