@@ -337,22 +337,51 @@ async def _notify_main_agent(group_id: str) -> None:
         if info.get("group_id") == group_id
     ]
 
-    parts = []
+    summaries = []
+    findings_parts = []
+    all_sources = []
+    needs_info_questions = []
+    failures = []
+
     for _aid, agent in group:
         name = agent.get("name", "unnamed")
-        status = agent["status"]
-        if status == "completed":
-            result = agent.get("result", "(no result)")
-            parts.append(f"## {name}\n{result}")
-        else:
+        parsed = agent.get("parsed_result")
+        if parsed is None:
             error = agent.get("error", "unknown error")
-            parts.append(f"## {name}\nFAILED: {error}")
+            failures.append(f"- **{name}**: {error}")
+            continue
 
-    synthetic_text = (
-        "[AGENT_RESULTS]\n"
-        f"{len(group)} background agent(s) finished.\n\n"
-        + "\n\n".join(parts)
-    )
+        summaries.append(f"- **{name}**: {parsed['summary']}")
+
+        if parsed["status"] == "needs_info":
+            needs_info_questions.append(f"- **{name}**: {parsed.get('question', 'no question provided')}")
+
+        if parsed["status"] == "failed":
+            failures.append(f"- **{name}**: {parsed.get('error', 'no error details')}")
+
+        if parsed.get("findings"):
+            findings_parts.append(f"### {name}\n" + "\n".join(f"- {f}" for f in parsed["findings"]))
+
+        if parsed.get("sources"):
+            all_sources.extend(parsed["sources"])
+
+    sections = [f"[AGENT_RESULTS]\n{len(group)} background agent(s) finished."]
+    sections.append("## Summaries\n" + "\n".join(summaries))
+
+    if needs_info_questions:
+        sections.append("## NEEDS_INFO — agents need clarification\n" + "\n".join(needs_info_questions))
+
+    if failures:
+        sections.append("## FAILED\n" + "\n".join(failures))
+
+    if findings_parts:
+        sections.append("## Findings\n" + "\n\n".join(findings_parts))
+
+    if all_sources:
+        unique_sources = list(dict.fromkeys(all_sources))
+        sections.append("## Sources\n" + "\n".join(f"- {s}" for s in unique_sources))
+
+    synthetic_text = "\n\n".join(sections)
 
     # Delete ephemeral progress messages
     if _app_state is not None:
@@ -537,11 +566,13 @@ async def _run_agent(
             on_event=_heartbeat,
         )
 
+        parsed = parse_agent_result(result_text)
         _agents[agent_id]["status"] = "completed"
         _agents[agent_id]["result"] = result_text
-        _agents[agent_id]["result_preview"] = result_text[:200]
+        _agents[agent_id]["parsed_result"] = parsed
+        _agents[agent_id]["result_preview"] = parsed["summary"]
         _agents[agent_id]["usage"] = usage
-        logger.info("Agent %s completed", agent_id[:8])
+        logger.info("Agent %s completed (agent_status=%s)", agent_id[:8], parsed["status"])
 
     except asyncio.CancelledError:
         _agents[agent_id]["status"] = "timed_out"

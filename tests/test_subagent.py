@@ -1467,3 +1467,82 @@ class TestAgentTypeSuffixes:
             assert not archetype["system_suffix"].startswith("You are"), (
                 f"{name} suffix still starts with 'You are'"
             )
+
+
+# ---------------------------------------------------------------------------
+# Wiring: parse_agent_result into _run_agent and _notify_main_agent
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_run_agent_stores_parsed_result():
+    """_run_agent parses JSON result and stores structured data."""
+    app_state = _make_app_state()
+    agent_id = "parse-test"
+    subagent_mod._agents[agent_id] = {
+        "name": "parser",
+        "prompt": "test",
+        "status": "starting",
+        "group_id": "pg",
+        "created_at": "2026-01-01T00:00:00+00:00",
+    }
+
+    structured = json.dumps({
+        "status": "complete",
+        "summary": "Found answer",
+        "findings": ["fact1"],
+        "sources": ["https://example.com"],
+    })
+    mock_usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+
+    with patch("spare_paw.router.tool_loop.run_tool_loop", return_value=(structured, mock_usage)):
+        with patch("spare_paw.core.prompt.build_subagent_prompt", return_value="sys"):
+            await subagent_mod._run_agent(
+                agent_id, "test", app_state,
+                model=None, tools_filter=None, max_iterations=5,
+            )
+
+    agent = subagent_mod._agents[agent_id]
+    assert agent["parsed_result"]["status"] == "complete"
+    assert agent["parsed_result"]["findings"] == ["fact1"]
+
+
+@pytest.mark.asyncio
+async def test_notify_formats_structured_results():
+    """_notify_main_agent formats structured JSON results into readable bundle."""
+    queue = asyncio.Queue()
+    subagent_mod._message_queue = queue
+
+    subagent_mod._agents["s1"] = {
+        "name": "researcher",
+        "status": "completed",
+        "group_id": "grp1",
+        "result": "raw text",
+        "parsed_result": {
+            "status": "complete",
+            "summary": "Found 3 options",
+            "findings": ["Option A", "Option B"],
+            "sources": ["https://a.com"],
+        },
+    }
+    subagent_mod._agents["s2"] = {
+        "name": "analyst",
+        "status": "completed",
+        "group_id": "grp1",
+        "result": "raw text",
+        "parsed_result": {
+            "status": "needs_info",
+            "summary": "Need more data",
+            "question": "What is the budget?",
+            "findings": [],
+            "sources": [],
+        },
+    }
+
+    await subagent_mod._notify_main_agent("grp1")
+
+    _, synthetic = await queue.get()
+    assert "Found 3 options" in synthetic
+    assert "NEEDS_INFO" in synthetic or "needs_info" in synthetic.lower()
+    assert "What is the budget?" in synthetic
+
+    subagent_mod._message_queue = None
