@@ -1434,3 +1434,36 @@ class TestParseAgentResult:
         raw = "x" * 500
         result = subagent_mod.parse_agent_result(raw)
         assert len(result["summary"]) <= 200
+
+
+# ---------------------------------------------------------------------------
+# Agent type suffixes — deliverable-oriented with JSON schema
+# ---------------------------------------------------------------------------
+
+class TestAgentTypeSuffixes:
+    def test_researcher_suffix_has_json_schema(self):
+        suffix = subagent_mod.AGENT_TYPES["researcher"]["system_suffix"]
+        assert "JSON" in suffix or "json" in suffix
+        assert "status" in suffix
+        assert "findings" in suffix
+
+    def test_coder_suffix_has_json_schema(self):
+        suffix = subagent_mod.AGENT_TYPES["coder"]["system_suffix"]
+        assert "JSON" in suffix or "json" in suffix
+        assert "status" in suffix
+
+    def test_analyst_suffix_has_json_schema(self):
+        suffix = subagent_mod.AGENT_TYPES["analyst"]["system_suffix"]
+        assert "JSON" in suffix or "json" in suffix
+        assert "status" in suffix
+
+    def test_browser_suffix_has_json_schema(self):
+        suffix = subagent_mod.AGENT_TYPES["browser"]["system_suffix"]
+        assert "JSON" in suffix or "json" in suffix
+        assert "status" in suffix
+
+    def test_suffixes_no_longer_start_with_you_are(self):
+        for name, archetype in subagent_mod.AGENT_TYPES.items():
+            assert not archetype["system_suffix"].startswith("You are"), (
+                f"{name} suffix still starts with 'You are'"
+            )

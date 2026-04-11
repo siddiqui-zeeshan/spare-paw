@@ -249,18 +249,22 @@ _watchdog_task: asyncio.Task | None = None
 
 _DEFAULT_AGENT_LIMITS: dict[str, int] = {"shell": 15, "web_search": 5}
 
-_CONSULT_NUDGE = (
-    " If you are unsure about scope, priorities, or direction, use consult_main "
-    "to ask the main agent before proceeding."
+_JSON_SCHEMA_INSTRUCTION = (
+    '\n\nReturn your final response as JSON:\n'
+    '{"status": "complete|needs_info|failed", "summary": "one line", '
+    '"findings": ["..."], "sources": ["..."], '
+    '"question": "if needs_info", "error": "if failed"}\n'
 )
 
 AGENT_TYPES: dict[str, dict[str, Any]] = {
     "researcher": {
         "system_suffix": (
-            "You are a research agent. Search thoroughly, use multiple sources, "
-            "and cite URLs when possible. Focus on finding accurate, up-to-date information. "
-            "Use browser tools for pages that need JavaScript rendering or interaction."
-            + _CONSULT_NUDGE
+            "Search for information relevant to the task. Use multiple sources and verify "
+            "claims across them. Cite URLs for every factual claim. "
+            "Use browser tools for pages that need JavaScript rendering or interaction.\n\n"
+            "Do not execute commands unrelated to research. Do not modify files. "
+            "If the task is ambiguous or you need clarification, return status \"needs_info\" with your question."
+            + _JSON_SCHEMA_INSTRUCTION
         ),
         "tools": [
             "tavily_search", "web_scrape", "shell", "files",
@@ -273,29 +277,33 @@ AGENT_TYPES: dict[str, dict[str, Any]] = {
     },
     "coder": {
         "system_suffix": (
-            "You are a coding agent. Write, test, and debug code. "
-            "Use the shell to run commands and verify your work."
-            + _CONSULT_NUDGE
+            "Write, test, and debug code to accomplish the task. Use the shell to run "
+            "commands and verify your work. Test before reporting completion.\n\n"
+            "Do not make changes outside the scope of the task. "
+            "If requirements are ambiguous, return status \"needs_info\" with your question."
+            + _JSON_SCHEMA_INSTRUCTION
         ),
         "tools": ["shell", "files", "code", "web_scrape", "tavily_search"],
         "tool_limits": {"shell": 30, "web_search": 5, "tavily_search": 5},
     },
     "analyst": {
         "system_suffix": (
-            "You are an analysis agent. Analyze data, produce summaries, "
-            "and extract key insights. Be thorough but concise."
-            + _CONSULT_NUDGE
+            "Analyze the data or information provided. Extract key insights, identify "
+            "patterns, and produce a concise summary. Support claims with evidence.\n\n"
+            "Do not take actions \u2014 only analyze and report. "
+            "If the data is insufficient, return status \"needs_info\" with what you need."
+            + _JSON_SCHEMA_INSTRUCTION
         ),
         "tools": ["files", "shell", "tavily_search", "web_scrape"],
         "tool_limits": {"shell": 15, "web_search": 5, "tavily_search": 5},
     },
     "browser": {
         "system_suffix": (
-            "You are a browser automation agent. Navigate websites, fill forms, "
-            "interact with pages, and extract data using the browser tools. "
+            "Navigate websites, fill forms, interact with pages, and extract data. "
             "Use browser_get_elements to discover page structure before clicking or typing. "
-            "Use browser_wait after actions that trigger dynamic content loading."
-            + _CONSULT_NUDGE
+            "Use browser_wait after actions that trigger dynamic content loading.\n\n"
+            "If a page requires login or hits a CAPTCHA, return status \"needs_info\"."
+            + _JSON_SCHEMA_INSTRUCTION
         ),
         "tools": [
             "browser_navigate", "browser_click", "browser_type",
