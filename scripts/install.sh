@@ -136,10 +136,12 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
 ExecStart=$VENV_DIR/bin/spare-paw gateway
 Restart=always
 RestartSec=5
+WatchdogSec=90s
 
 [Install]
 WantedBy=default.target

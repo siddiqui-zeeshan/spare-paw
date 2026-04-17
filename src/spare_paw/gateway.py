@@ -109,8 +109,28 @@ def _setup_logging() -> None:
     root_logger.addHandler(stderr_handler)
 
 
+def _sd_notify(message: str) -> None:
+    """Send a message to systemd via $NOTIFY_SOCKET.
+
+    No-op when NOTIFY_SOCKET is not set (dev runs, non-systemd platforms).
+    Swallows socket errors so a broken watchdog never crashes the gateway.
+    """
+    import os
+    import socket
+
+    sock_path = os.environ.get("NOTIFY_SOCKET")
+    if not sock_path:
+        return
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.connect(sock_path)
+            sock.sendall(message.encode("utf-8"))
+    except OSError:
+        logger.debug("sd_notify failed (socket unreachable)", exc_info=True)
+
+
 async def _heartbeat() -> None:
-    """Touch the heartbeat file every 30 seconds."""
+    """Touch the heartbeat file and ping systemd watchdog every 30 seconds."""
     while True:
         try:
             HEARTBEAT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -119,6 +139,7 @@ async def _heartbeat() -> None:
             )
         except OSError:
             logger.exception("Failed to write heartbeat file")
+        _sd_notify("WATCHDOG=1")
         await asyncio.sleep(30)
 
 
@@ -410,12 +431,14 @@ async def _async_main() -> None:
     _start_queue(app_state, backend)
 
     logger.info("Bot started (%s backend)", backend_type)
+    _sd_notify("READY=1")
 
     # Wait until shutdown signal
     await shutdown_event.wait()
 
     # ---- Graceful shutdown ----
     logger.info("Shutting down...")
+    _sd_notify("STOPPING=1")
 
     heartbeat_task.cancel()
     try:
