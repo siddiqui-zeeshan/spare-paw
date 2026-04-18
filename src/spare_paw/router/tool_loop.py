@@ -19,6 +19,53 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def _stream_and_assemble(
+    client: "OpenRouterClient",
+    messages: list[dict[str, Any]],
+    model: str,
+    tools: list[dict[str, Any]] | None,
+    on_token: Callable[[str], None] | None,
+) -> tuple[dict[str, Any], dict[str, int]]:
+    """Consume a streaming chat completion and return (assistant_message, usage).
+
+    Emits each text delta to ``on_token`` in real time. Assembles tool_calls
+    from incremental deltas into the final OpenAI-format structure.
+    """
+    text_parts: list[str] = []
+    tool_calls_by_index: dict[int, dict[str, Any]] = {}
+    usage: dict[str, int] = {}
+
+    async for chunk in client.chat_stream(messages, model, tools):
+        if chunk.kind == "text_delta" and chunk.content:
+            text_parts.append(chunk.content)
+            if on_token is not None:
+                on_token(chunk.content)
+        elif chunk.kind == "tool_call_delta" and chunk.tool_index is not None:
+            tc = tool_calls_by_index.setdefault(
+                chunk.tool_index,
+                {"id": "", "type": "function",
+                 "function": {"name": "", "arguments": ""}},
+            )
+            if chunk.tool_id:
+                tc["id"] = chunk.tool_id
+            if chunk.tool_name:
+                tc["function"]["name"] = chunk.tool_name
+            if chunk.arguments_fragment:
+                tc["function"]["arguments"] += chunk.arguments_fragment
+        elif chunk.kind == "done":
+            usage = chunk.usage or {}
+
+    assistant_message: dict[str, Any] = {
+        "role": "assistant",
+        "content": "".join(text_parts) if text_parts else None,
+    }
+    if tool_calls_by_index:
+        assistant_message["tool_calls"] = [
+            tool_calls_by_index[i] for i in sorted(tool_calls_by_index)
+        ]
+    return assistant_message, usage
+
+
 @dataclass
 class ToolEvent:
     """Event emitted during tool loop execution for UI feedback."""
