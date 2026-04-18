@@ -46,15 +46,22 @@ class MessageView(Vertical):
         label = "You" if self.role == "user" else "spare-paw"
         header = f"[bold]{label}[/bold]   [dim]{_fmt_timestamp(self._timestamp)}[/dim]"
         yield Static(header, classes="header")
-        self._body = Static(self.live_text)
-        yield self._body
+        if self.live_text:
+            self._body = Static(self.live_text)
+            yield self._body
+
+    def _ensure_body(self) -> None:
+        """Lazily mount the text body so it renders *below* any tool rows."""
+        if not hasattr(self, "_body"):
+            self._body = Static(self.live_text)
+            self.mount(self._body)
 
     def append_stream(self, chunk: str) -> None:
         if self.finalized:
             return
         self.live_text += chunk
-        if hasattr(self, "_body"):
-            self._body.update(self.live_text)
+        self._ensure_body()
+        self._body.update(self.live_text)
 
     def finalize(self) -> None:
         """Swap the live plain-text body for rendered Markdown."""
