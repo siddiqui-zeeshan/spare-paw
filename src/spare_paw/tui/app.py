@@ -88,6 +88,19 @@ class SparePawTUI(App):
                 self._url = self._client._url
                 self._connection = "disconnected"
                 self.query_one(ChatLog).append_error(f"Could not reach remote: {exc}")
+            # Wire connection-state transitions from the client to the status bar.
+            try:
+                self._client.subscribe_state(
+                    lambda state: self.post_message(
+                        ConnectionStateChanged(
+                            state=getattr(state, "value", str(state)),
+                            detail="",
+                        )
+                    )
+                )
+            except AttributeError:
+                # Older client without subscribe_state — skip silently
+                pass
             await self._load_history_remote()
         else:
             if self._app_state is not None:
