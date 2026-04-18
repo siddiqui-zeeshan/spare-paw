@@ -294,3 +294,69 @@ class TestSlashCommands:
 
     def test_contains_forget(self):
         assert "/forget" in SLASH_COMMANDS
+
+
+from spare_paw.tui.backend import TUIBackend as NewTUIBackend  # noqa: E402
+from spare_paw.tui.events import StreamToken as EvStreamToken  # noqa: E402
+from spare_paw.tui.events import ToolCallEnd as EvToolCallEnd  # noqa: E402
+from spare_paw.tui.events import ToolCallStart as EvToolCallStart  # noqa: E402
+
+
+class _CapturingApp:
+    def __init__(self):
+        self.messages = []
+    def post_message(self, msg):
+        self.messages.append(msg)
+
+
+def test_new_tuibackend_on_token_dispatches_stream_token():
+    app = _CapturingApp()
+    backend = NewTUIBackend(app)
+    backend.on_token("hello")
+    assert len(app.messages) == 1
+    assert isinstance(app.messages[0], EvStreamToken)
+    assert app.messages[0].token == "hello"
+
+
+def test_new_tuibackend_tool_start_dispatches_tool_call_start():
+    app = _CapturingApp()
+    backend = NewTUIBackend(app)
+
+    class _Evt:
+        kind = "tool_start"
+        tool_name = "read_file"
+        tool_args = {"path": "foo.py"}
+        iteration = 1
+        result_preview = None
+
+    backend.on_tool_event(_Evt())
+    assert any(isinstance(m, EvToolCallStart) for m in app.messages)
+    start = next(m for m in app.messages if isinstance(m, EvToolCallStart))
+    assert start.tool == "read_file"
+    assert start.args == {"path": "foo.py"}
+
+
+def test_new_tuibackend_tool_end_dispatches_tool_call_end():
+    app = _CapturingApp()
+    backend = NewTUIBackend(app)
+
+    class _StartEvt:
+        kind = "tool_start"
+        tool_name = "shell"
+        tool_args = {"cmd": "ls"}
+        iteration = 1
+        result_preview = None
+
+    class _EndEvt:
+        kind = "tool_end"
+        tool_name = "shell"
+        tool_args = None
+        iteration = 1
+        result_preview = "file1\nfile2"
+
+    backend.on_tool_event(_StartEvt())
+    backend.on_tool_event(_EndEvt())
+    ends = [m for m in app.messages if isinstance(m, EvToolCallEnd)]
+    assert len(ends) == 1
+    assert ends[0].success is True
+    assert ends[0].preview == "file1\nfile2"
