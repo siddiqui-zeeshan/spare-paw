@@ -35,15 +35,17 @@ MessageView {
 MessageView.user .header { color: $success; text-style: bold; }
 MessageView.assistant .header { color: $accent; text-style: bold; }
 
-/* Disable Markdown widget's internal scrollbar so ChatLog owns scrolling. */
-Markdown {
-    height: auto;
-    overflow-x: hidden;
-    overflow-y: hidden;
+/* ChatLog owns the only scrollbar — hide any nested scrollbars + overflow. */
+#chat-log * {
     scrollbar-size: 0 0;
 }
-MarkdownTable, MarkdownFence, MarkdownBlockQuote {
+Markdown, MarkdownBlock, MarkdownTable, MarkdownTableContent, MarkdownFence {
     overflow-x: hidden;
+    overflow-y: hidden;
+}
+
+/* Hide the Composer's TextArea scrollbar unless it's actively overflowing. */
+#composer {
     scrollbar-size: 0 0;
 }
 
