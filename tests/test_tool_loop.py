@@ -10,20 +10,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from spare_paw.router.tool_loop import run_tool_loop
+from tests._stream_helpers import FakeStreamingClient, response_to_chunks
 
 
-def _make_response(content: str = "", tool_calls: list | None = None, usage: dict | None = None):
-    """Helper to build an OpenRouter-style response."""
-    msg: dict = {"content": content}
-    if tool_calls:
-        msg["tool_calls"] = tool_calls
-    return {
-        "choices": [{"message": msg, "finish_reason": "stop"}],
-        "usage": usage or {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-    }
-
-
-def _make_tool_call(name: str, args: dict, call_id: str = "call_1"):
+def _tool_call_dict(name: str, args: dict, call_id: str = "call_1") -> dict:
     return {
         "id": call_id,
         "type": "function",
@@ -31,15 +21,28 @@ def _make_tool_call(name: str, args: dict, call_id: str = "call_1"):
     }
 
 
+def _chunks(
+    content: str = "",
+    tool_calls: list | None = None,
+    usage: dict | None = None,
+):
+    """Wrapper around response_to_chunks that matches the shape the old
+    ``_make_response`` helper used (content + tool_calls + usage)."""
+    return response_to_chunks(
+        content=content or None,
+        tool_calls=tool_calls,
+        usage=usage
+        or {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    )
+
+
 class TestToolExecutionTimeout:
     @pytest.mark.asyncio
     async def test_tool_timeout_returns_error_to_model(self):
         """A tool that exceeds the timeout gets an error fed back to the model."""
-        client = AsyncMock()
-        # First call: model requests a tool call
-        client.chat = AsyncMock(side_effect=[
-            _make_response(tool_calls=[_make_tool_call("slow_tool", {})]),
-            _make_response(content="Done after timeout"),
+        client = FakeStreamingClient([
+            _chunks(tool_calls=[_tool_call_dict("slow_tool", {})]),
+            _chunks(content="Done after timeout"),
         ])
 
         registry = AsyncMock()
@@ -50,9 +53,10 @@ class TestToolExecutionTimeout:
         registry.execute = slow_tool
         registry.get_schemas = MagicMock(return_value=[])
 
+        messages: list[dict] = [{"role": "user", "content": "test"}]
         result = await run_tool_loop(
             client=client,
-            messages=[{"role": "user", "content": "test"}],
+            messages=messages,
             model="test-model",
             tools=[{"type": "function", "function": {"name": "slow_tool"}}],
             tool_registry=registry,
@@ -60,26 +64,30 @@ class TestToolExecutionTimeout:
         )
 
         assert result == "Done after timeout"
-        # Check the tool result message contains timeout error
-        tool_msg = [m for m in client.chat.call_args_list[1][0][0] if m.get("role") == "tool"]
-        assert len(tool_msg) == 1
-        assert "timed out" in tool_msg[0]["content"].lower()
+        # Check the tool result message appended to the conversation contains
+        # the timeout error.
+        tool_msgs = [m for m in messages if m.get("role") == "tool"]
+        assert len(tool_msgs) == 1
+        assert "timed out" in tool_msgs[0]["content"].lower()
 
     @pytest.mark.asyncio
     async def test_llm_call_timeout(self):
         """LLM call that exceeds timeout raises and is handled."""
-        client = AsyncMock()
 
-        async def slow_chat(*args, **kwargs):
-            await asyncio.sleep(999)
+        class _SlowStreamClient:
+            async def chat_stream(self, messages, model, tools=None):
+                await asyncio.sleep(999)
+                if False:  # pragma: no cover — makes this an async generator
+                    yield None
 
-        client.chat = slow_chat
+            async def chat(self, *a, **kw):  # pragma: no cover — not expected
+                raise AssertionError("chat() should not be called on timeout path")
 
         registry = AsyncMock()
         registry.get_schemas = MagicMock(return_value=[])
 
         result = await run_tool_loop(
-            client=client,
+            client=_SlowStreamClient(),
             messages=[{"role": "user", "content": "test"}],
             model="test-model",
             tools=[],
@@ -94,15 +102,14 @@ class TestTokenBudgetCircuitBreaker:
     @pytest.mark.asyncio
     async def test_aborts_when_budget_exceeded(self):
         """Loop aborts when cumulative tokens exceed the budget."""
-        client = AsyncMock()
         # Each call uses 20k tokens; budget is 30k, so should abort after 2 iterations
-        client.chat = AsyncMock(side_effect=[
-            _make_response(
-                tool_calls=[_make_tool_call("shell", {"command": "echo 1"})],
+        client = FakeStreamingClient([
+            _chunks(
+                tool_calls=[_tool_call_dict("shell", {"command": "echo 1"})],
                 usage={"prompt_tokens": 15000, "completion_tokens": 5000, "total_tokens": 20000},
             ),
-            _make_response(
-                tool_calls=[_make_tool_call("shell", {"command": "echo 2"})],
+            _chunks(
+                tool_calls=[_tool_call_dict("shell", {"command": "echo 2"})],
                 usage={"prompt_tokens": 15000, "completion_tokens": 5000, "total_tokens": 20000},
             ),
         ])
@@ -121,18 +128,20 @@ class TestTokenBudgetCircuitBreaker:
 
         assert "token budget" in result.lower() or "token limit" in result.lower()
         # Should have stopped after 2 iterations, not continued
-        assert client.chat.call_count == 2
+        assert client.stream_call_count == 2
 
     @pytest.mark.asyncio
     async def test_no_abort_under_budget(self):
         """Loop completes normally when under token budget."""
-        client = AsyncMock()
-        client.chat = AsyncMock(side_effect=[
-            _make_response(
-                tool_calls=[_make_tool_call("shell", {"command": "echo 1"})],
+        client = FakeStreamingClient([
+            _chunks(
+                tool_calls=[_tool_call_dict("shell", {"command": "echo 1"})],
                 usage={"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
             ),
-            _make_response(content="Final answer", usage={"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}),
+            _chunks(
+                content="Final answer",
+                usage={"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            ),
         ])
 
         registry = AsyncMock()
@@ -150,55 +159,25 @@ class TestTokenBudgetCircuitBreaker:
         assert result == "Final answer"
 
 
-class TestMissingChoices:
-    @pytest.mark.asyncio
-    async def test_missing_choices_returns_error(self):
-        """LLM response without 'choices' key returns error instead of crashing."""
-        client = AsyncMock()
-        client.chat = AsyncMock(return_value={"usage": {"prompt_tokens": 10, "completion_tokens": 0, "total_tokens": 10}})
-
-        registry = AsyncMock()
-
-        result = await run_tool_loop(
-            client=client,
-            messages=[{"role": "user", "content": "test"}],
-            model="test-model",
-            tools=[],
-            tool_registry=registry,
-        )
-
-        assert "invalid response" in result.lower()
-
-    @pytest.mark.asyncio
-    async def test_empty_choices_returns_error(self):
-        """LLM response with empty choices list returns error instead of crashing."""
-        client = AsyncMock()
-        client.chat = AsyncMock(return_value={"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 0, "total_tokens": 10}})
-
-        registry = AsyncMock()
-
-        result = await run_tool_loop(
-            client=client,
-            messages=[{"role": "user", "content": "test"}],
-            model="test-model",
-            tools=[],
-            tool_registry=registry,
-        )
-
-        assert "invalid response" in result.lower()
+# NOTE: TestMissingChoices (test_missing_choices_returns_error,
+# test_empty_choices_returns_error) was deleted when run_tool_loop moved to
+# streaming. The "no choices" branch only existed on the non-streaming
+# chat() response path; the streaming assembler builds an assistant message
+# from deltas and cannot produce the same "missing choices" shape. An
+# equivalent regression for a malformed stream would need to be written
+# against ``_stream_and_assemble`` directly.
 
 
 class TestStructuredLogging:
     @pytest.mark.asyncio
     async def test_logs_contain_structured_fields(self, caplog):
         """Log entries include iteration, tool_name, and duration_ms."""
-        client = AsyncMock()
-        client.chat = AsyncMock(side_effect=[
-            _make_response(
-                tool_calls=[_make_tool_call("shell", {"command": "echo hi"})],
+        client = FakeStreamingClient([
+            _chunks(
+                tool_calls=[_tool_call_dict("shell", {"command": "echo hi"})],
                 usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
             ),
-            _make_response(content="Done"),
+            _chunks(content="Done"),
         ])
 
         registry = AsyncMock()
@@ -222,11 +201,14 @@ class TestStructuredLogging:
     @pytest.mark.asyncio
     async def test_logs_token_budget_abort(self, caplog):
         """Token budget abort is logged with warning level."""
-        client = AsyncMock()
-        client.chat = AsyncMock(return_value=_make_response(
-            tool_calls=[_make_tool_call("shell", {"command": "echo"})],
-            usage={"prompt_tokens": 30000, "completion_tokens": 10000, "total_tokens": 40000},
-        ))
+        # A single stream response is enough: iter1 accumulates 40k > 30k budget,
+        # the next iteration's top-of-loop check aborts before another stream call.
+        client = FakeStreamingClient([
+            _chunks(
+                tool_calls=[_tool_call_dict("shell", {"command": "echo"})],
+                usage={"prompt_tokens": 30000, "completion_tokens": 10000, "total_tokens": 40000},
+            ),
+        ])
 
         registry = AsyncMock()
         registry.execute = AsyncMock(return_value="ok")

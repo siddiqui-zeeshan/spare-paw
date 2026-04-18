@@ -14,6 +14,7 @@ from spare_paw.router.openrouter import (
     OpenRouterError,
 )
 from spare_paw.router.tool_loop import run_tool_loop
+from tests._stream_helpers import FakeStreamingClient, response_to_chunks
 
 
 # ---------------------------------------------------------------------------
@@ -150,47 +151,37 @@ class TestRetryLogic:
 # run_tool_loop
 # ---------------------------------------------------------------------------
 
-def _tool_call_response(name: str, arguments: dict, call_id: str = "call_1") -> dict:
-    """Build a model response that contains a tool call."""
-    return {
-        "choices": [
+def _tool_call_chunks(name: str, arguments: dict, call_id: str = "call_1"):
+    """Build a StreamChunk sequence that encodes a single tool call."""
+    return response_to_chunks(
+        tool_calls=[
             {
-                "message": {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": call_id,
-                            "type": "function",
-                            "function": {
-                                "name": name,
-                                "arguments": json.dumps(arguments),
-                            },
-                        }
-                    ],
-                }
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": json.dumps(arguments),
+                },
             }
         ]
-    }
+    )
 
 
-def _text_response(content: str = "done") -> dict:
-    return {"choices": [{"message": {"role": "assistant", "content": content}}]}
+def _text_chunks(content: str = "done"):
+    """Build a StreamChunk sequence that encodes a final text response."""
+    return response_to_chunks(content=content)
 
 
 class TestRunToolLoop:
-    """Tests for the tool-calling execution loop."""
+    """Tests for the tool-calling execution loop (streaming transport)."""
 
     @pytest.mark.asyncio
     async def test_executes_tool_and_returns_final_text(self):
         """Loop calls a tool, feeds the result back, then returns final text."""
-        mock_client = AsyncMock()
-        mock_client.chat = AsyncMock(
-            side_effect=[
-                _tool_call_response("greet", {"name": "Alice"}),
-                _text_response("Hello Alice!"),
-            ]
-        )
+        client = FakeStreamingClient([
+            _tool_call_chunks("greet", {"name": "Alice"}),
+            _text_chunks("Hello Alice!"),
+        ])
 
         mock_registry = AsyncMock()
         mock_registry.execute = AsyncMock(return_value="greeting sent")
@@ -199,7 +190,7 @@ class TestRunToolLoop:
         tools = [{"type": "function", "function": {"name": "greet"}}]
 
         result = await run_tool_loop(
-            client=mock_client,
+            client=client,
             messages=messages,
             model="m",
             tools=tools,
@@ -209,28 +200,29 @@ class TestRunToolLoop:
         assert result == "Hello Alice!"
         # Tool was executed once
         mock_registry.execute.assert_called_once_with("greet", {"name": "Alice"}, None)
-        # Client was called twice (tool call round + final text round)
-        assert mock_client.chat.call_count == 2
+        # chat_stream was called twice (tool call round + final text round)
+        assert client.stream_call_count == 2
+        # Non-streaming chat() must not be used on the normal success path
+        assert client.chat_call_count == 0
 
     @pytest.mark.asyncio
     async def test_max_iterations_returns_fallback(self):
-        """When the model keeps calling tools, the loop caps at max_iterations."""
-        mock_client = AsyncMock()
-        # Always return a tool call — never a plain text response
-        mock_client.chat = AsyncMock(
-            side_effect=[
-                _tool_call_response("tick", {}, call_id=f"c{i}")
-                for i in range(5)
-            ]
-            # After exhausting iterations, the loop makes one final call without tools
-            + [_text_response("gave up")]
-        )
+        """When the model keeps calling tools, the loop caps at max_iterations.
+
+        After max_iterations, run_tool_loop makes one final *non-streaming*
+        chat() call to request a summary. The FakeStreamingClient.chat()
+        fallback returns "fallback" text which becomes the final result.
+        """
+        client = FakeStreamingClient([
+            _tool_call_chunks("tick", {}, call_id=f"c{i}")
+            for i in range(5)
+        ])
 
         mock_registry = AsyncMock()
         mock_registry.execute = AsyncMock(return_value="ok")
 
         result = await run_tool_loop(
-            client=mock_client,
+            client=client,
             messages=[{"role": "user", "content": "loop"}],
             model="m",
             tools=[{"type": "function", "function": {"name": "tick"}}],
@@ -238,18 +230,18 @@ class TestRunToolLoop:
             max_iterations=5,
         )
 
-        assert result == "gave up"
-        # 5 iterations with tool calls + 1 final call = 6 total
-        assert mock_client.chat.call_count == 6
+        # After exhausting iterations, the non-streaming chat() fallback runs
+        assert result == "fallback"
+        assert client.stream_call_count == 5
+        assert client.chat_call_count == 1
 
     @pytest.mark.asyncio
     async def test_no_tool_calls_returns_immediately(self):
         """If the model responds with text on the first call, return immediately."""
-        mock_client = AsyncMock()
-        mock_client.chat = AsyncMock(return_value=_text_response("immediate"))
+        client = FakeStreamingClient([_text_chunks("immediate")])
 
         result = await run_tool_loop(
-            client=mock_client,
+            client=client,
             messages=[],
             model="m",
             tools=[],
@@ -257,18 +249,15 @@ class TestRunToolLoop:
         )
 
         assert result == "immediate"
-        assert mock_client.chat.call_count == 1
+        assert client.stream_call_count == 1
 
     @pytest.mark.asyncio
     async def test_tool_execution_error_is_fed_back(self):
         """If a tool raises, the error string is sent back to the model."""
-        mock_client = AsyncMock()
-        mock_client.chat = AsyncMock(
-            side_effect=[
-                _tool_call_response("fail_tool", {}),
-                _text_response("handled error"),
-            ]
-        )
+        client = FakeStreamingClient([
+            _tool_call_chunks("fail_tool", {}),
+            _text_chunks("handled error"),
+        ])
 
         mock_registry = AsyncMock()
         mock_registry.execute = AsyncMock(side_effect=RuntimeError("boom"))
@@ -276,7 +265,7 @@ class TestRunToolLoop:
         messages: list[dict] = [{"role": "user", "content": "try"}]
 
         result = await run_tool_loop(
-            client=mock_client,
+            client=client,
             messages=messages,
             model="m",
             tools=[{"type": "function", "function": {"name": "fail_tool"}}],
@@ -284,8 +273,6 @@ class TestRunToolLoop:
         )
 
         assert result == "handled error"
-        # The tool result message should contain the error
-        _ = messages[-1]  # last message before final call
         # Find the tool result message in the messages list
         tool_results = [m for m in messages if m.get("role") == "tool"]
         assert len(tool_results) == 1
@@ -295,36 +282,28 @@ class TestRunToolLoop:
     @pytest.mark.asyncio
     async def test_spawn_agent_calls_in_same_batch_share_group_id(self):
         """Multiple spawn_agent calls in one model response get the same group_id."""
-        # Model returns two spawn_agent calls in one response, then text
-        batch_response = {
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": "call_a",
-                            "type": "function",
-                            "function": {
-                                "name": "spawn_agent",
-                                "arguments": json.dumps({"name": "r1", "prompt": "research"}),
-                            },
-                        },
-                        {
-                            "id": "call_b",
-                            "type": "function",
-                            "function": {
-                                "name": "spawn_agent",
-                                "arguments": json.dumps({"name": "r2", "prompt": "analyze"}),
-                            },
-                        },
-                    ],
-                }
-            }]
-        }
-
-        mock_client = AsyncMock()
-        mock_client.chat = AsyncMock(return_value=batch_response)
+        batch_chunks = response_to_chunks(
+            tool_calls=[
+                {
+                    "id": "call_a",
+                    "type": "function",
+                    "function": {
+                        "name": "spawn_agent",
+                        "arguments": json.dumps({"name": "r1", "prompt": "research"}),
+                    },
+                },
+                {
+                    "id": "call_b",
+                    "type": "function",
+                    "function": {
+                        "name": "spawn_agent",
+                        "arguments": json.dumps({"name": "r2", "prompt": "analyze"}),
+                    },
+                },
+            ]
+        )
+        # Both tool calls return __stop_turn__, so a single iteration is enough
+        client = FakeStreamingClient([batch_chunks])
 
         # Capture the args passed to execute to verify group_id injection
         captured_args: list[dict] = []
@@ -337,7 +316,7 @@ class TestRunToolLoop:
         mock_registry.execute = AsyncMock(side_effect=_capture_execute)
 
         await run_tool_loop(
-            client=mock_client,
+            client=client,
             messages=[{"role": "user", "content": "research two topics"}],
             model="m",
             tools=[{"type": "function", "function": {"name": "spawn_agent"}}],
@@ -355,29 +334,19 @@ class TestRunToolLoop:
     @pytest.mark.asyncio
     async def test_non_spawn_tools_not_injected_with_group_id(self):
         """Non-spawn_agent tools should NOT get a group_id injected."""
-        batch_response = {
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": "call_a",
-                            "type": "function",
-                            "function": {
-                                "name": "shell",
-                                "arguments": json.dumps({"command": "ls"}),
-                            },
-                        },
-                    ],
-                }
-            }]
-        }
-
-        mock_client = AsyncMock()
-        mock_client.chat = AsyncMock(
-            side_effect=[batch_response, _text_response("done")]
+        batch_chunks = response_to_chunks(
+            tool_calls=[
+                {
+                    "id": "call_a",
+                    "type": "function",
+                    "function": {
+                        "name": "shell",
+                        "arguments": json.dumps({"command": "ls"}),
+                    },
+                },
+            ]
         )
+        client = FakeStreamingClient([batch_chunks, _text_chunks("done")])
 
         captured_args: list[dict] = []
 
@@ -389,7 +358,7 @@ class TestRunToolLoop:
         mock_registry.execute = AsyncMock(side_effect=_capture_execute)
 
         await run_tool_loop(
-            client=mock_client,
+            client=client,
             messages=[{"role": "user", "content": "list files"}],
             model="m",
             tools=[{"type": "function", "function": {"name": "shell"}}],
@@ -402,11 +371,7 @@ class TestRunToolLoop:
     @pytest.mark.asyncio
     async def test_spawn_calls_in_different_batches_get_different_group_ids(self):
         """spawn_agent calls in separate model responses get different group_ids."""
-        # First response: one spawn_agent call (returns stop_turn)
-        # We need two separate iterations that each have a spawn_agent
-        # But __stop_turn__ ends the loop. So we test via two separate
-        # run_tool_loop invocations simulating two user turns.
-
+        # Two separate run_tool_loop invocations (simulating two user turns)
         captured_args: list[dict] = []
 
         async def _capture_execute(name, arguments, executor=None):
@@ -414,54 +379,44 @@ class TestRunToolLoop:
             return json.dumps({"__stop_turn__": True, "reply": "spawned"})
 
         # First turn
-        mock_client_1 = AsyncMock()
-        mock_client_1.chat = AsyncMock(return_value={
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [{
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {
-                            "name": "spawn_agent",
-                            "arguments": json.dumps({"name": "a1", "prompt": "t1"}),
-                        },
-                    }],
-                }
-            }]
-        })
+        client_1 = FakeStreamingClient([
+            response_to_chunks(
+                tool_calls=[{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "spawn_agent",
+                        "arguments": json.dumps({"name": "a1", "prompt": "t1"}),
+                    },
+                }]
+            )
+        ])
         mock_registry = AsyncMock()
         mock_registry.execute = AsyncMock(side_effect=_capture_execute)
 
         await run_tool_loop(
-            client=mock_client_1, messages=[], model="m",
+            client=client_1, messages=[], model="m",
             tools=[], tool_registry=mock_registry,
         )
 
         # Second turn
-        mock_client_2 = AsyncMock()
-        mock_client_2.chat = AsyncMock(return_value={
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [{
-                        "id": "call_2",
-                        "type": "function",
-                        "function": {
-                            "name": "spawn_agent",
-                            "arguments": json.dumps({"name": "a2", "prompt": "t2"}),
-                        },
-                    }],
-                }
-            }]
-        })
+        client_2 = FakeStreamingClient([
+            response_to_chunks(
+                tool_calls=[{
+                    "id": "call_2",
+                    "type": "function",
+                    "function": {
+                        "name": "spawn_agent",
+                        "arguments": json.dumps({"name": "a2", "prompt": "t2"}),
+                    },
+                }]
+            )
+        ])
         mock_registry_2 = AsyncMock()
         mock_registry_2.execute = AsyncMock(side_effect=_capture_execute)
 
         await run_tool_loop(
-            client=mock_client_2, messages=[], model="m",
+            client=client_2, messages=[], model="m",
             tools=[], tool_registry=mock_registry_2,
         )
 
@@ -473,14 +428,11 @@ class TestRunToolLoop:
     async def test_tool_rate_limit_returns_error_instead_of_execution(self):
         """A tool exceeding its per-turn limit gets an error result, not execution."""
         # Model calls "web_search" twice in separate iterations; limit is 1
-        mock_client = AsyncMock()
-        mock_client.chat = AsyncMock(
-            side_effect=[
-                _tool_call_response("web_search", {"query": "first"}, call_id="c1"),
-                _tool_call_response("web_search", {"query": "second"}, call_id="c2"),
-                _text_response("done"),
-            ]
-        )
+        client = FakeStreamingClient([
+            _tool_call_chunks("web_search", {"query": "first"}, call_id="c1"),
+            _tool_call_chunks("web_search", {"query": "second"}, call_id="c2"),
+            _text_chunks("done"),
+        ])
 
         mock_registry = AsyncMock()
         mock_registry.execute = AsyncMock(return_value="search result")
@@ -489,7 +441,7 @@ class TestRunToolLoop:
         tools = [{"type": "function", "function": {"name": "web_search"}}]
 
         result = await run_tool_loop(
-            client=mock_client,
+            client=client,
             messages=messages,
             model="m",
             tools=tools,
@@ -514,13 +466,10 @@ class TestRunToolLoop:
         mock_registry.execute = AsyncMock(return_value="ok")
 
         async def _run_once() -> str:
-            client = AsyncMock()
-            client.chat = AsyncMock(
-                side_effect=[
-                    _tool_call_response("shell", {"command": "ls"}, call_id="cx"),
-                    _text_response("done"),
-                ]
-            )
+            client = FakeStreamingClient([
+                _tool_call_chunks("shell", {"command": "ls"}, call_id="cx"),
+                _text_chunks("done"),
+            ])
             return await run_tool_loop(
                 client=client,
                 messages=[{"role": "user", "content": "run"}],
@@ -543,13 +492,12 @@ class TestRunToolLoop:
     async def test_tools_without_limits_are_unlimited(self):
         """A tool not present in the limits dict is never rate-limited."""
         call_count = 3
-        mock_client = AsyncMock()
-        mock_client.chat = AsyncMock(
-            side_effect=[
-                _tool_call_response("custom_tool", {}, call_id=f"c{i}")
+        client = FakeStreamingClient(
+            [
+                _tool_call_chunks("custom_tool", {}, call_id=f"c{i}")
                 for i in range(call_count)
             ]
-            + [_text_response("done")]
+            + [_text_chunks("done")]
         )
 
         mock_registry = AsyncMock()
@@ -557,7 +505,7 @@ class TestRunToolLoop:
 
         # custom_tool is absent from DEFAULT_TOOL_LIMITS, so it has no limit
         result = await run_tool_loop(
-            client=mock_client,
+            client=client,
             messages=[{"role": "user", "content": "go"}],
             model="m",
             tools=[{"type": "function", "function": {"name": "custom_tool"}}],
@@ -572,20 +520,19 @@ class TestRunToolLoop:
         """Setting a tool limit to None removes the default, making it unlimited."""
         # shell has a default limit of 10; override with None to remove it
         call_count = 12
-        mock_client = AsyncMock()
-        mock_client.chat = AsyncMock(
-            side_effect=[
-                _tool_call_response("shell", {"command": "ls"}, call_id=f"c{i}")
+        client = FakeStreamingClient(
+            [
+                _tool_call_chunks("shell", {"command": "ls"}, call_id=f"c{i}")
                 for i in range(call_count)
             ]
-            + [_text_response("done")]
+            + [_text_chunks("done")]
         )
 
         mock_registry = AsyncMock()
         mock_registry.execute = AsyncMock(return_value="ok")
 
         result = await run_tool_loop(
-            client=mock_client,
+            client=client,
             messages=[{"role": "user", "content": "go"}],
             model="m",
             tools=[{"type": "function", "function": {"name": "shell"}}],
