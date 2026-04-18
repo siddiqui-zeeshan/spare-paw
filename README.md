@@ -187,6 +187,20 @@ The poll endpoint returns a JSON array of response messages and supports images 
 
 `spare-paw chat` gives you a full-screen terminal interface to the same engine, without opening Telegram.
 
+### Streaming TUI
+
+Claude Code-style streaming chat interface:
+
+- Per-token live streaming from `chat_stream`
+- Inline collapsible tool-call rows (`ToolRow`) with status icons and duration
+- Input history (↑/↓), multi-line compose (Shift+Enter), chat search (`/find query`)
+- Copy last assistant message (Ctrl+Y)
+- Scroll navigation (PgUp/PgDn, Home/End)
+- Automatic reconnect with capped exponential backoff in remote mode
+- Status bar shows connection state, model, message + tool counts
+
+Run with: `python -m spare_paw chat` (local) or `python -m spare_paw chat --remote <url>` (remote).
+
 ### Install optional dependencies
 
 ```bash
