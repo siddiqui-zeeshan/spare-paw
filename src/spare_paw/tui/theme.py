@@ -35,6 +35,18 @@ MessageView {
 MessageView.user .header { color: $success; text-style: bold; }
 MessageView.assistant .header { color: $accent; text-style: bold; }
 
+/* Disable Markdown widget's internal scrollbar so ChatLog owns scrolling. */
+Markdown {
+    height: auto;
+    overflow-x: hidden;
+    overflow-y: hidden;
+    scrollbar-size: 0 0;
+}
+MarkdownTable, MarkdownFence, MarkdownBlockQuote {
+    overflow-x: hidden;
+    scrollbar-size: 0 0;
+}
+
 ToolRow {
     padding: 0 0 0 2;
     height: auto;
