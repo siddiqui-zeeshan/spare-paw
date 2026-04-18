@@ -7,11 +7,25 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 import aiohttp
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class StreamChunk:
+    """A single event from the OpenRouter SSE stream."""
+    kind: str                              # "text_delta" | "tool_call_delta" | "done"
+    content: str | None = None             # text_delta
+    tool_index: int | None = None          # tool_call_delta
+    tool_id: str | None = None             # tool_call_delta (first chunk only)
+    tool_name: str | None = None           # tool_call_delta (first chunk only)
+    arguments_fragment: str | None = None  # tool_call_delta
+    finish_reason: str | None = None       # done
+    usage: dict | None = None              # done
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -158,8 +172,8 @@ class OpenRouterClient:
         messages: list[dict[str, Any]],
         model: str,
         tools: list[dict[str, Any]] | None = None,
-    ) -> AsyncIterator[str]:
-        """Yield text deltas via SSE streaming."""
+    ) -> AsyncIterator[StreamChunk]:
+        """Yield structured StreamChunk events via OpenRouter SSE."""
         body: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -182,15 +196,39 @@ class OpenRouterClient:
                         continue
                     payload = decoded[6:]
                     if payload == "[DONE]":
-                        break
+                        return
                     try:
-                        chunk = json.loads(payload)
-                        delta = chunk["choices"][0].get("delta", {})
-                        content = delta.get("content")
-                        if content:
-                            yield content
-                    except (json.JSONDecodeError, KeyError, IndexError):
+                        chunk_data = json.loads(payload)
+                    except json.JSONDecodeError:
                         continue
+
+                    choices = chunk_data.get("choices") or []
+                    if not choices:
+                        continue
+                    choice = choices[0]
+                    delta = choice.get("delta") or {}
+                    finish_reason = choice.get("finish_reason")
+
+                    content = delta.get("content")
+                    if content:
+                        yield StreamChunk(kind="text_delta", content=content)
+
+                    for tc in delta.get("tool_calls") or []:
+                        fn = tc.get("function") or {}
+                        yield StreamChunk(
+                            kind="tool_call_delta",
+                            tool_index=tc.get("index"),
+                            tool_id=tc.get("id"),
+                            tool_name=fn.get("name"),
+                            arguments_fragment=fn.get("arguments"),
+                        )
+
+                    if finish_reason is not None:
+                        yield StreamChunk(
+                            kind="done",
+                            finish_reason=finish_reason,
+                            usage=chunk_data.get("usage"),
+                        )
 
     async def list_models(self, force_refresh: bool = False) -> list[dict[str, Any]]:
         """Fetch available models from the OpenRouter models endpoint.
