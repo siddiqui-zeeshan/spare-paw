@@ -6,11 +6,18 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
+from enum import Enum
 from typing import Any
 
 import aiohttp
 
 logger = logging.getLogger(__name__)
+
+
+class ConnectionState(str, Enum):
+    CONNECTED = "connected"
+    RECONNECTING = "reconnecting"
+    DISCONNECTED = "disconnected"
 
 
 class RemoteClient:
@@ -21,6 +28,9 @@ class RemoteClient:
         self._secret = secret
         self._session_id = uuid.uuid4().hex
         self._session: aiohttp.ClientSession | None = None
+        self._state = ConnectionState.DISCONNECTED
+        self._subscribers: list = []
+        self._backoff_step = 0
 
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -141,6 +151,30 @@ class RemoteClient:
             resp.raise_for_status()
             data = await resp.json()
             return data.get("messages", [])
+
+    @property
+    def connection_state(self) -> ConnectionState:
+        return self._state
+
+    def subscribe_state(self, callback) -> None:
+        self._subscribers.append(callback)
+
+    def _set_state(self, state: ConnectionState) -> None:
+        if state == self._state:
+            return
+        self._state = state
+        if state == ConnectionState.CONNECTED:
+            self._backoff_step = 0
+        for cb in list(self._subscribers):
+            try:
+                cb(state)
+            except Exception:
+                pass
+
+    def _next_backoff(self) -> float:
+        delay = min(1.0 * (2 ** self._backoff_step), 30.0)
+        self._backoff_step += 1
+        return delay
 
     async def close(self) -> None:
         if self._session is not None and not self._session.closed:
