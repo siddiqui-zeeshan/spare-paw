@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from spare_paw.router.openrouter import StreamChunk
-from spare_paw.router.tool_loop import _stream_and_assemble
+from spare_paw.router.tool_loop import _stream_and_assemble, run_tool_loop
 
 
 class _FakeClient:
@@ -65,3 +65,45 @@ async def test_assemble_text_then_tool_call():
     assert tokens == ["Let me check."]
     assert msg["content"] == "Let me check."
     assert msg["tool_calls"][0]["function"]["name"] == "shell"
+
+
+class _StreamingFakeClient:
+    """Fake client that responds via chat_stream only; chat() should never be called."""
+    def __init__(self, responses: list[list[StreamChunk]]) -> None:
+        self._responses = list(responses)
+
+    async def chat_stream(self, messages, model, tools):
+        chunks = self._responses.pop(0)
+        for c in chunks:
+            yield c
+
+    async def chat(self, *a, **kw):
+        raise AssertionError("run_tool_loop must not call chat() — it should stream")
+
+
+@pytest.mark.asyncio
+async def test_run_tool_loop_emits_tokens_live_not_retroactively():
+    """Verify on_token fires during streaming, not by splitting final content after."""
+    chunks = [
+        StreamChunk(kind="text_delta", content="one "),
+        StreamChunk(kind="text_delta", content="two "),
+        StreamChunk(kind="text_delta", content="three"),
+        StreamChunk(kind="done", finish_reason="stop",
+                    usage={"prompt_tokens": 1, "completion_tokens": 3, "total_tokens": 4}),
+    ]
+
+    class _EmptyRegistry:
+        def get_schemas(self): return []
+
+    tokens: list[str] = []
+    result = await run_tool_loop(
+        client=_StreamingFakeClient([chunks]),
+        messages=[{"role": "user", "content": "hi"}],
+        model="m",
+        tools=[],
+        tool_registry=_EmptyRegistry(),
+        on_token=tokens.append,
+    )
+
+    assert tokens == ["one ", "two ", "three"]
+    assert result == "one two three"

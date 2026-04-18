@@ -183,23 +183,24 @@ async def run_tool_loop(
         if on_event is not None:
             on_event(ToolEvent(kind="llm_start", iteration=iteration))
 
-        # LLM call with timeout
+        # Stream the model response, assembling text + tool_calls from deltas
         try:
-            response = await asyncio.wait_for(
-                client.chat(messages, model, tools),
+            assistant_message, usage = await asyncio.wait_for(
+                _stream_and_assemble(client, messages, model, tools, on_token),
                 timeout=llm_timeout,
             )
         except asyncio.TimeoutError:
             logger.error(
-                "Iteration %d: LLM call timed out after %.0fs",
+                "Iteration %d: LLM stream timed out after %.0fs",
                 iteration, llm_timeout,
             )
             return _maybe_with_usage(
                 f"LLM call timed out after {llm_timeout:.0f}s. Try again."
             )
 
-        _accumulate_usage(response)
-        usage = response.get("usage", {})
+        # Accumulate usage from this iteration
+        for key in total_usage:
+            total_usage[key] += usage.get(key, 0)
         if usage:
             logger.info(
                 "Iteration %d: tokens prompt=%d completion=%d total=%d cumulative=%d",
@@ -213,29 +214,12 @@ async def run_tool_loop(
         if on_event is not None:
             on_event(ToolEvent(kind="llm_end", iteration=iteration))
 
-        choices = response.get("choices")
-        if not choices:
-            logger.error(
-                "Iteration %d: LLM response missing 'choices': %s",
-                iteration, json.dumps(response)[:300],
-            )
-            return _maybe_with_usage(
-                "LLM returned an invalid response (no choices). Try again."
-            )
-        choice = choices[0]
-        assistant_message = choice["message"]
-
-        # Check for tool calls
         tool_calls = assistant_message.get("tool_calls")
 
         if not tool_calls:
-            # No tool calls — if streaming requested, re-do final call via stream
-            content = assistant_message.get("content", "")
-            if on_token is not None and content:
-                # Emit tokens in word-sized chunks
-                for word in content.split(" "):
-                    on_token(word + " ")
-            return _maybe_with_usage(content or "")
+            # No tool calls — streaming already emitted tokens; return the final text.
+            content = assistant_message.get("content") or ""
+            return _maybe_with_usage(content)
 
         # Append the assistant message (with tool_calls) to the conversation
         messages.append(assistant_message)
