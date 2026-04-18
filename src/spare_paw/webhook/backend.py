@@ -231,7 +231,7 @@ class WebhookBackend:
             }
         elif event.kind == "tool_end":
             msg = {
-                "type": "tool_result",
+                "type": "tool_end",
                 "tool": event.tool_name,
                 "preview": event.result_preview or "",
             }

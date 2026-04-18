@@ -350,7 +350,7 @@ class TestOnToolEvent:
 
             queue = backend._session_queues["default"]
             msg = queue.get_nowait()
-            assert msg["type"] == "tool_result"
+            assert msg["type"] == "tool_end"
             assert msg["tool"] == "shell"
             assert msg["preview"] == "file1.txt"
         finally:
