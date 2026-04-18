@@ -40,6 +40,7 @@ class SparePawTUI(App):
         Binding("ctrl+n", "new_conversation", "New"),
         Binding("escape", "cancel_request", "Cancel"),
         Binding("ctrl+f", "find", "Find"),
+        Binding("ctrl+y", "copy_last", "Copy last"),
         Binding("pageup", "scroll_page_up", "PgUp"),
         Binding("pagedown", "scroll_page_down", "PgDn"),
         Binding("home", "scroll_home", "Top"),
@@ -360,6 +361,33 @@ class SparePawTUI(App):
     def action_find(self) -> None:
         # MVP placeholder — /find is routed via SlashCommandRouter in Task 16.
         pass
+
+    def action_copy_last(self) -> None:
+        views = list(self.query_one(ChatLog).query(MessageView))
+        for view in reversed(views):
+            if view.role == "assistant" and view.live_text:
+                _copy_to_clipboard(view.live_text)
+                self.query_one(ChatLog).append_error(
+                    f"Copied {len(view.live_text)} chars"
+                )
+                return
+
+
+def _copy_to_clipboard(text: str) -> None:
+    """Best-effort clipboard copy. Uses pbcopy on macOS, xclip/wl-copy on Linux.
+
+    Silently does nothing if no clipboard tool is available.
+    """
+    import shutil
+    import subprocess
+
+    for cmd in (["pbcopy"], ["wl-copy"], ["xclip", "-selection", "clipboard"]):
+        if shutil.which(cmd[0]):
+            try:
+                subprocess.run(cmd, input=text.encode(), check=True)
+                return
+            except subprocess.SubprocessError:
+                continue
 
 
 async def run_tui(client=None, app_state=None) -> None:
