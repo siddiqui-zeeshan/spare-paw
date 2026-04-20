@@ -273,3 +273,15 @@ class TestResolveModel:
     def test_vision_has_default(self):
         cfg = Config()
         assert resolve_model(cfg, "vision") == "google/gemini-3.1-flash-lite-preview"
+
+
+def test_voice_tts_defaults_present():
+    from spare_paw.config import _build_defaults
+
+    defaults = _build_defaults()
+    assert defaults["voice"]["tts_enabled"] is True
+    assert defaults["voice"]["tts_voice"] == "nova"
+    assert defaults["voice"]["tts_model"] == "openai/gpt-4o-mini-tts-2025-12-15"
+    assert defaults["voice"]["tts_max_chars"] == 2000
+    assert defaults["voice"]["tts_timeout_seconds"] == 30
+    assert defaults["voice"]["ffmpeg_path"] == "ffmpeg"

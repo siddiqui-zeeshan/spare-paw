@@ -79,6 +79,14 @@ def _build_defaults() -> dict[str, Any]:
             "max_bytes": 10485760,
             "backup_count": 3,
         },
+        "voice": {
+            "tts_enabled": True,
+            "tts_voice": "nova",
+            "tts_model": "openai/gpt-4o-mini-tts-2025-12-15",
+            "tts_max_chars": 2000,
+            "tts_timeout_seconds": 30,
+            "ffmpeg_path": "ffmpeg",
+        },
         "mcp": {
             "servers": [],
         },
