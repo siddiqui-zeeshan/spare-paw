@@ -277,6 +277,52 @@ async def new_conversation() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Per-conversation metadata helpers
+# ---------------------------------------------------------------------------
+
+
+async def get_conversation_meta(conversation_id: str) -> dict[str, Any]:
+    """Read the conversation's metadata JSON column as a dict.
+
+    Returns {} if the conversation doesn't exist, the column is NULL,
+    or the column contains invalid JSON (with a WARNING log in the last case).
+    """
+    db = await get_db()
+    async with db.execute(
+        "SELECT metadata FROM conversations WHERE id = ?",
+        (conversation_id,),
+    ) as cursor:
+        row = await cursor.fetchone()
+    if row is None or row["metadata"] is None:
+        return {}
+    try:
+        data = json.loads(row["metadata"])
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        logger.warning(
+            "Invalid JSON in conversations.metadata for %s — treating as empty",
+            conversation_id,
+        )
+        return {}
+
+
+async def set_conversation_meta(conversation_id: str, key: str, value: Any) -> None:
+    """Merge one key into the conversation's metadata JSON column.
+
+    Existing keys in the metadata dict are preserved; only the given key
+    is overwritten.
+    """
+    db = await get_db()
+    current = await get_conversation_meta(conversation_id)
+    current[key] = value
+    await db.execute(
+        "UPDATE conversations SET metadata = ? WHERE id = ?",
+        (json.dumps(current), conversation_id),
+    )
+    await db.commit()
+
+
+# ---------------------------------------------------------------------------
 # LCM compaction engine
 # ---------------------------------------------------------------------------
 
