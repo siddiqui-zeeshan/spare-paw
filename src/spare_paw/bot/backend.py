@@ -264,6 +264,8 @@ class TelegramBackend:
             BotCommand("roles", "List roles with assigned models"),
             BotCommand("plan", "Deep thinking: plan before executing"),
             BotCommand("mcp", "List connected MCP servers and tools"),
+            BotCommand("talk", "Toggle voice replies for this conversation"),
+            BotCommand("voice", "Set or show the TTS voice"),
         ])
         await self._application.start()
         if self._application.updater is not None:

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
 
+from spare_paw import context as ctx_module
 from spare_paw.core.commands import (
     cmd_config_reset,
     cmd_config_show,
@@ -31,6 +32,8 @@ from spare_paw.core.commands import (
     cmd_roles,
     cmd_search,
     cmd_status,
+    cmd_talk,
+    cmd_voice,
 )
 from spare_paw.db import get_db
 
@@ -575,6 +578,34 @@ async def _plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 # ---------------------------------------------------------------------------
+# /talk — toggle voice replies for this conversation
+# ---------------------------------------------------------------------------
+
+async def _talk_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    app_state = _get_app_state(context)
+    if not _is_owner(update, app_state):
+        return
+    convo_id = await ctx_module.get_or_create_conversation()
+    args = list(context.args) if context.args else []
+    result = await cmd_talk(app_state, convo_id, args)
+    await update.message.reply_text(result)
+
+
+# ---------------------------------------------------------------------------
+# /voice — set or show the TTS voice for this conversation
+# ---------------------------------------------------------------------------
+
+async def _voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    app_state = _get_app_state(context)
+    if not _is_owner(update, app_state):
+        return
+    convo_id = await ctx_module.get_or_create_conversation()
+    args = list(context.args) if context.args else []
+    result = await cmd_voice(app_state, convo_id, args)
+    await update.message.reply_text(result)
+
+
+# ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 
@@ -594,3 +625,5 @@ def register_commands(application: "Application") -> None:
     application.add_handler(CommandHandler("logs", _logs_handler))
     application.add_handler(CommandHandler("mcp", _mcp_handler))
     application.add_handler(CommandHandler("plan", _plan_handler))
+    application.add_handler(CommandHandler("talk", _talk_handler))
+    application.add_handler(CommandHandler("voice", _voice_handler))
