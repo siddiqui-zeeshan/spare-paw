@@ -15,10 +15,12 @@ from typing import TYPE_CHECKING, Any
 from spare_paw import context as ctx_module
 from spare_paw.config import resolve_model
 from spare_paw.context import compact_with_retry
+from spare_paw.core import voice as voice_module
 from spare_paw.core.planner import create_plan
 from spare_paw.core.prompt import build_system_prompt
 from spare_paw.core.vision import describe_media
-from spare_paw.core.voice import VoiceTranscriptionError, transcribe
+from spare_paw.core.voice import VoiceTranscriptionError
+from spare_paw.core.voice_out import VoiceRenderError, render_voice_note
 from spare_paw.router.tool_loop import run_tool_loop
 
 if TYPE_CHECKING:
@@ -79,7 +81,7 @@ async def process_message(
     if msg.voice_bytes:
         try:
             config_data = getattr(app_state.config, "data", app_state.config)
-            text = await transcribe(msg.voice_bytes, config_data)
+            text = await voice_module.transcribe(msg.voice_bytes, config_data)
         except VoiceTranscriptionError:
             logger.exception("Voice transcription failed")
             return
@@ -113,7 +115,8 @@ async def process_message(
     await ctx.ingest(conversation_id, "user", text)
 
     # 4. Assemble context
-    system_prompt = await build_system_prompt(app_state.config)
+    voice_mode = bool((await ctx.get_conversation_meta(conversation_id)).get("talk_mode"))
+    system_prompt = await build_system_prompt(app_state.config, voice_mode=voice_mode)
     messages = await ctx.assemble(conversation_id, system_prompt)
 
     # 5. Inject media description
@@ -183,9 +186,49 @@ async def process_message(
         name="lcm-compact",
     )
 
-    # 11. Send response via backend (markdown — backend handles formatting)
+    # 11. Send response via backend — voice or text based on conversation state
     elapsed = time.perf_counter() - t0
     logger.info("Message processed in %.1fs (%d chars response)", elapsed, len(response_text))
+
+    if not response_text:
+        return
+
+    meta = await ctx.get_conversation_meta(conversation_id)
+    should_voice = (
+        bool(meta.get("talk_mode")) or (msg.voice_bytes is not None)
+    )
+    tts_enabled = app_state.config.get("voice.tts_enabled", True)
+    max_chars = app_state.config.get("voice.tts_max_chars", 2000)
+
+    if should_voice and tts_enabled and len(response_text) <= max_chars:
+        voice_name = meta.get("voice") or app_state.config.get("voice.tts_voice", "nova")
+        try:
+            ogg = await render_voice_note(response_text, voice_name, app_state.config)
+            await backend.send_voice(ogg)
+            if meta.get("voice_error_notified"):
+                await ctx.set_conversation_meta(conversation_id, "voice_error_notified", False)
+            return
+        except VoiceRenderError as exc:
+            logger.warning("TTS failed, falling back to text: %s", exc)
+            if not meta.get("voice_error_notified"):
+                try:
+                    await backend.send_text(
+                        "🔇 Voice generation failed. Falling back to text."
+                    )
+                except Exception:
+                    logger.exception("Failed to send TTS-failure notice")
+                await ctx.set_conversation_meta(
+                    conversation_id, "voice_error_notified", True,
+                )
+            await backend.send_text(response_text)
+            return
+
+    if should_voice and tts_enabled and len(response_text) > max_chars:
+        await backend.send_text(
+            "⚠️ reply too long for voice\n\n" + response_text
+        )
+        return
+
     await backend.send_text(response_text)
 
 
